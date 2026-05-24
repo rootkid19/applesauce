@@ -1,87 +1,59 @@
 # Quickstart
 
-Clone anywhere. The default workspace is the parent directory of the cloned
-`applesauce` repo:
+Clone anywhere. By default output goes next to the repo:
 
 ```text
-<workspace>/
-  applesauce/
-  artifacts/
+<workspace>/applesauce
+<workspace>/artifacts
 ```
 
-Override paths only if needed:
+## Host State
 
-```zsh
-export APPLESAUCE_WORKSPACE=/path/to/workspace
-export APPLESAUCE_ARTIFACTS=/path/to/artifacts
-export LS_STALE_HARNESS_ROOT=/path/to/harnesses/ls-stale-state
-```
-
-The LS stale-state harness source is included under:
-
-```text
-applesauce/harnesses/ls-stale-state/
-```
-
-## 26.3 Runtime
-
-Boot into Tahoe 26.3, then run:
+Run once after booting the target OS:
 
 ```zsh
 cd /path/to/applesauce
-tools/collect_campaign1_host_state.sh
-tools/run_campaign1_stock_gate.sh
+./tools/collect_campaign1_host_state.sh
 ```
 
-If the stock gate reports that this exists, stop:
+## LaunchServices Stock Gate
+
+On Tahoe 26.3:
+
+```zsh
+cd /path/to/applesauce
+./tools/run_campaign1_stock_gate.sh background
+```
+
+## Dyld Member Extraction
+
+On Tahoe 26.3:
+
+```zsh
+cd /path/to/applesauce
+./tools/collect_campaign1_dyld_members.sh 26.3 /System/Volumes/Preboot/Cryptexes/OS/System/Library/dyld/dyld_shared_cache_arm64e
+```
+
+On Tahoe 26.4:
+
+```zsh
+cd /path/to/applesauce
+./tools/collect_campaign1_dyld_members.sh 26.4 /System/Volumes/Preboot/Cryptexes/OS/System/Library/dyld/dyld_shared_cache_arm64e
+```
+
+Main output:
 
 ```text
-/Library/Preferences/FeatureFlags/Domain/LaunchServices.plist
+<workspace>/artifacts/dyld-members/<label>/selected/usr/lib/libLaunchServicesSupport.dylib
 ```
 
-That run is not clean-stock until the plist is moved aside and LaunchServices
-state is refreshed by rebooting or restarting `launchservicesd`.
+The dyld fallback extracts the full cache first, so expect time and disk use.
 
-If the stock gate shows stock `enableQuitReally: YES`, run:
+## Pack Text Results
 
 ```zsh
-tools/run_campaign1_pidjob.sh
-```
-
-If the `none` run does not show any `enableQuitReally` line, run a clean
-subordinate-state probe before `pidjob`:
-
-```zsh
-tools/run_campaign1_stock_gate.sh background
-```
-
-Promote only if the clean `background` run shows stale app retention or
-`inheritApplicationSubprocesses` without a FeatureFlags plist.
-
-## Dyld Members
-
-Extract target dyld members from a complete split cache:
-
-```zsh
-tools/collect_campaign1_dyld_members.sh 26.3 /System/Volumes/Preboot/Cryptexes/OS/System/Library/dyld/dyld_shared_cache_arm64e
-```
-
-For 26.4, use the mounted 26.4 cache path and label:
-
-```zsh
-tools/collect_campaign1_dyld_members.sh 26.4 /path/to/26.4/dyld_shared_cache_arm64e
-```
-
-## Package Text Results
-
-```zsh
-tools/pack_campaign1_results.sh
-```
-
-Full runtime output stays local under:
-
-```text
-<artifacts>/runtime/
+cd /path/to/applesauce
+./tools/pack_campaign1_results.sh
 ```
 
 Do not commit Apple binaries, dyld caches, extracted Mach-Os, app bundles, or raw
