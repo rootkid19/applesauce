@@ -26,6 +26,7 @@ dyld/
 # Local operator state.
 .env
 *.local
+tools/dsc_extract_bundle
 
 # Generated harness output.
 harnesses/ls-stale-state/build/
