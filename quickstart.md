@@ -6,7 +6,6 @@ Clone anywhere. The default workspace is the parent directory of the cloned
 ```text
 <workspace>/
   applesauce/
-  harnesses/ls-stale-state/
   artifacts/
 ```
 
@@ -16,6 +15,12 @@ Override paths only if needed:
 export APPLESAUCE_WORKSPACE=/path/to/workspace
 export APPLESAUCE_ARTIFACTS=/path/to/artifacts
 export LS_STALE_HARNESS_ROOT=/path/to/harnesses/ls-stale-state
+```
+
+The LS stale-state harness source is included under:
+
+```text
+applesauce/harnesses/ls-stale-state/
 ```
 
 ## 26.3 Runtime

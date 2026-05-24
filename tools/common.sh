@@ -35,19 +35,23 @@ artifact_root() {
 
 harness_root() {
   if [[ -n "${LS_STALE_HARNESS_ROOT:-}" ]]; then
-    cd "$LS_STALE_HARNESS_ROOT" && pwd
-    return
+    if [[ -x "$LS_STALE_HARNESS_ROOT/scripts/build.sh" ]]; then
+      cd "$LS_STALE_HARNESS_ROOT" && pwd
+      return
+    fi
+    echo "LS_STALE_HARNESS_ROOT is set but missing scripts/build.sh: $LS_STALE_HARNESS_ROOT" >&2
+    exit 2
   fi
 
   local root
-  root="$(workspace_root)/harnesses/ls-stale-state"
-  if [[ -d "$root" ]]; then
+  root="$(applesauce_root)/harnesses/ls-stale-state"
+  if [[ -x "$root/scripts/build.sh" ]]; then
     cd "$root" && pwd
     return
   fi
 
-  root="$(applesauce_root)/harnesses/ls-stale-state"
-  if [[ -d "$root" ]]; then
+  root="$(workspace_root)/harnesses/ls-stale-state"
+  if [[ -x "$root/scripts/build.sh" ]]; then
     cd "$root" && pwd
     return
   fi
@@ -56,8 +60,10 @@ harness_root() {
 Missing LS stale-state harness.
 
 Set LS_STALE_HARNESS_ROOT to the harness directory, or place it at either:
-  <workspace>/harnesses/ls-stale-state
   <applesauce>/harnesses/ls-stale-state
+  <workspace>/harnesses/ls-stale-state
+
+The directory must contain scripts/build.sh.
 EOF
   exit 2
 }
