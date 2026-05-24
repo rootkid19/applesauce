@@ -3,10 +3,11 @@ set -euo pipefail
 
 source "$(cd "$(dirname "$0")" && pwd)/common.sh"
 
-ROOT="$(campaign_root)"
-HARNESS="$ROOT/harnesses/ls-stale-state"
+WORKSPACE="$(workspace_root)"
+ARTIFACTS="$(artifact_root)"
+HARNESS="$(harness_root)"
 STAMP="$(timestamp_utc)"
-RUN_PARENT="$ROOT/artifacts/runtime/ls-stock-gate"
+RUN_PARENT="$ARTIFACTS/runtime/ls-stock-gate"
 RUN_DIR="${RUN_DIR:-$RUN_PARENT/$(safe_sw_build_slug)-$STAMP-none}"
 PLIST="/Library/Preferences/FeatureFlags/Domain/LaunchServices.plist"
 
@@ -15,7 +16,8 @@ require_cmd lsappinfo
 
 mkdir -p "$RUN_DIR/environment"
 
-echo "[*] campaign root: $ROOT"
+echo "[*] workspace: $WORKSPACE"
+echo "[*] harness: $HARNESS"
 echo "[*] run dir: $RUN_DIR"
 
 "$(applesauce_root)/tools/collect_campaign1_host_state.sh" "$RUN_DIR/environment/host-state" >/dev/null

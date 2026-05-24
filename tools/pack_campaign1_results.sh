@@ -3,11 +3,12 @@ set -euo pipefail
 
 source "$(cd "$(dirname "$0")" && pwd)/common.sh"
 
-ROOT="$(campaign_root)"
+WORKSPACE="$(workspace_root)"
+ARTIFACTS="$(artifact_root)"
 STAMP="$(timestamp_utc)"
-SRC_RUNTIME="$ROOT/artifacts/runtime"
-SRC_DIFFS="$ROOT/artifacts/diffs/variant-pass"
-OUT_DIR="${1:-$ROOT/artifacts/shareable/campaign1-$STAMP}"
+SRC_RUNTIME="$ARTIFACTS/runtime"
+SRC_DIFFS="$ARTIFACTS/diffs/variant-pass"
+OUT_DIR="${1:-$ARTIFACTS/shareable/campaign1-$STAMP}"
 
 mkdir -p "$OUT_DIR"/{runtime-summaries,notes,manifests}
 

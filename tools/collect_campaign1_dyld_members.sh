@@ -21,8 +21,8 @@ EOF
 
 LABEL="$1"
 CACHE="$2"
-ROOT="$(campaign_root)"
-OUT="$ROOT/artifacts/dyld-members/$LABEL"
+ARTIFACTS="$(artifact_root)"
+OUT="$ARTIFACTS/dyld-members/$LABEL"
 
 if [[ ! -f "$CACHE" ]]; then
   echo "cache not found: $CACHE" >&2

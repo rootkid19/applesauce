@@ -1,18 +1,21 @@
 # Quickstart
 
-Assumed local layout:
+Clone anywhere. The default workspace is the parent directory of the cloned
+`applesauce` repo:
 
 ```text
-/Users/r00tk1d/chimera/apple/
+<workspace>/
   applesauce/
   harnesses/ls-stale-state/
   artifacts/
 ```
 
-If cloned elsewhere:
+Override paths only if needed:
 
 ```zsh
-export APPLE_CAMPAIGN_ROOT=/Users/r00tk1d/chimera/apple
+export APPLESAUCE_WORKSPACE=/path/to/workspace
+export APPLESAUCE_ARTIFACTS=/path/to/artifacts
+export LS_STALE_HARNESS_ROOT=/path/to/harnesses/ls-stale-state
 ```
 
 ## 26.3 Runtime
@@ -20,7 +23,7 @@ export APPLE_CAMPAIGN_ROOT=/Users/r00tk1d/chimera/apple
 Boot into Tahoe 26.3, then run:
 
 ```zsh
-cd /Users/r00tk1d/chimera/apple/applesauce
+cd /path/to/applesauce
 tools/collect_campaign1_host_state.sh
 tools/run_campaign1_stock_gate.sh
 ```
@@ -63,7 +66,7 @@ tools/pack_campaign1_results.sh
 Full runtime output stays local under:
 
 ```text
-/Users/r00tk1d/chimera/apple/artifacts/runtime/
+<artifacts>/runtime/
 ```
 
 Do not commit Apple binaries, dyld caches, extracted Mach-Os, app bundles, or raw

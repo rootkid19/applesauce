@@ -3,9 +3,9 @@ set -euo pipefail
 
 source "$(cd "$(dirname "$0")" && pwd)/common.sh"
 
-ROOT="$(campaign_root)"
+ARTIFACTS="$(artifact_root)"
 STAMP="$(timestamp_utc)"
-OUT="${1:-$ROOT/artifacts/runtime/host-state/$(safe_sw_build_slug)-$STAMP}"
+OUT="${1:-$ARTIFACTS/runtime/host-state/$(safe_sw_build_slug)-$STAMP}"
 
 mkdir -p "$OUT"
 

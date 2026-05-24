@@ -9,20 +9,56 @@ applesauce_root() {
   cd "$(script_dir)/.." && pwd
 }
 
-campaign_root() {
-  if [[ -n "${APPLE_CAMPAIGN_ROOT:-}" ]]; then
-    cd "$APPLE_CAMPAIGN_ROOT" && pwd
+workspace_root() {
+  if [[ -n "${APPLESAUCE_WORKSPACE:-}" ]]; then
+    cd "$APPLESAUCE_WORKSPACE" && pwd
     return
   fi
 
   local root
   root="$(applesauce_root)"
-  if [[ -d "$root/../harnesses/ls-stale-state" ]]; then
-    cd "$root/.." && pwd
+  cd "$root/.." && pwd
+}
+
+artifact_root() {
+  if [[ -n "${APPLESAUCE_ARTIFACTS:-}" ]]; then
+    mkdir -p "$APPLESAUCE_ARTIFACTS"
+    cd "$APPLESAUCE_ARTIFACTS" && pwd
     return
   fi
 
-  echo "Set APPLE_CAMPAIGN_ROOT to the apple campaign checkout." >&2
+  local root
+  root="$(workspace_root)/artifacts"
+  mkdir -p "$root"
+  cd "$root" && pwd
+}
+
+harness_root() {
+  if [[ -n "${LS_STALE_HARNESS_ROOT:-}" ]]; then
+    cd "$LS_STALE_HARNESS_ROOT" && pwd
+    return
+  fi
+
+  local root
+  root="$(workspace_root)/harnesses/ls-stale-state"
+  if [[ -d "$root" ]]; then
+    cd "$root" && pwd
+    return
+  fi
+
+  root="$(applesauce_root)/harnesses/ls-stale-state"
+  if [[ -d "$root" ]]; then
+    cd "$root" && pwd
+    return
+  fi
+
+  cat >&2 <<'EOF'
+Missing LS stale-state harness.
+
+Set LS_STALE_HARNESS_ROOT to the harness directory, or place it at either:
+  <workspace>/harnesses/ls-stale-state
+  <applesauce>/harnesses/ls-stale-state
+EOF
   exit 2
 }
 
