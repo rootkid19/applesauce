@@ -1,0 +1,28 @@
+.DS_Store
+
+# Keep Apple proprietary binaries, dyld caches, extracted Mach-Os, and raw run
+# bundles local. Commit scripts, notes, summaries, hashes, and manifests only.
+artifacts/
+runs/
+raw/
+cache/
+dyld/
+*.dylib
+*.framework/
+*.app/
+*.xpc/
+*.bundle/
+*.appex/
+*.pkg
+*.dmg
+*.ipsw
+*.mach-o
+*.bin
+*.tgz
+*.tar
+*.tar.gz
+*.zip
+
+# Local operator state.
+.env
+*.local
