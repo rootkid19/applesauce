@@ -94,5 +94,5 @@ write_sha256_manifest() {
     echo "missing directory: $dir" > "$out"
     return 0
   fi
-  (cd "$dir" && find . -type f -maxdepth 5 -print0 | sort -z | xargs -0 shasum -a 256) > "$out" 2>&1 || true
+  (cd "$dir" && find . -type f -print0 | sort -z | xargs -0 shasum -a 256) > "$out" 2>&1 || true
 }
