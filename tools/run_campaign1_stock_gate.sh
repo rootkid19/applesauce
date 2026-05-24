@@ -8,7 +8,8 @@ ARTIFACTS="$(artifact_root)"
 HARNESS="$(harness_root)"
 STAMP="$(timestamp_utc)"
 RUN_PARENT="$ARTIFACTS/runtime/ls-stock-gate"
-RUN_DIR="${RUN_DIR:-$RUN_PARENT/$(safe_sw_build_slug)-$STAMP-none}"
+SCENARIO="${1:-none}"
+RUN_DIR="${RUN_DIR:-$RUN_PARENT/$(safe_sw_build_slug)-$STAMP-$SCENARIO}"
 PLIST="/Library/Preferences/FeatureFlags/Domain/LaunchServices.plist"
 
 require_cmd log
@@ -53,17 +54,23 @@ fi
   SECOND_LINGER_SECONDS="${SECOND_LINGER_SECONDS:-15}" \
   JOB_START_WAIT_SECONDS="${JOB_START_WAIT_SECONDS:-3}" \
   LOG_SHOW_LAST="${LOG_SHOW_LAST:-8m}" \
-  "$HARNESS/scripts/run_same_bundle_relaunch.sh" none
+  "$HARNESS/scripts/run_same_bundle_relaunch.sh" "$SCENARIO"
 )
 
 {
   echo "run_dir=$RUN_DIR"
+  echo "scenario=$SCENARIO"
   echo
   echo "=== quitreally ==="
   rg -n "enableQuitReally|quitreally" "$RUN_DIR" || true
   echo
   echo "=== migration ==="
   rg -n "adding exited application|inheritApplicationSubprocesses|HasNoChildApplicationsOrSubprocesses|DEATH:|copyJobsLoadedByCoalition" "$RUN_DIR" || true
+  echo
+  echo "=== decision hints ==="
+  echo "- scenario=none only verifies clean environment and immediate-finalization baseline."
+  echo "- if enableQuitReally is absent, run this script again with background or forkhold."
+  echo "- promote only if a clean subordinate-state scenario retains/migrates the old app record."
 } > "$RUN_DIR/stock-gate-summary.txt" 2>&1
 
 cat "$RUN_DIR/stock-gate-summary.txt"

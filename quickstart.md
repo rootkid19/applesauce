@@ -48,6 +48,16 @@ If the stock gate shows stock `enableQuitReally: YES`, run:
 tools/run_campaign1_pidjob.sh
 ```
 
+If the `none` run does not show any `enableQuitReally` line, run a clean
+subordinate-state probe before `pidjob`:
+
+```zsh
+tools/run_campaign1_stock_gate.sh background
+```
+
+Promote only if the clean `background` run shows stale app retention or
+`inheritApplicationSubprocesses` without a FeatureFlags plist.
+
 ## Dyld Members
 
 Extract target dyld members from a complete split cache:
