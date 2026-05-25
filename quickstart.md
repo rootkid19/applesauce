@@ -221,6 +221,57 @@ useful context for CloudDocs/Finder scoped URL paths, but it is not enough to
 start race testing. These two files are generated from the live log stream for
 the current run; use `log-show-fileprovider.txt` only as backfill context.
 
+## Packet 004 ImportDomain Gate
+
+Run from a normal Terminal on Tahoe 26.4 and Tahoe 26.5:
+
+```zsh
+cd /path/to/applesauce
+git pull
+./tools/run_packet004_importdomain_gate.sh normal
+./tools/run_packet004_importdomain_gate.sh symlink-leaf
+```
+
+Optional local swap loop, confined to the run directory:
+
+```zsh
+./tools/run_packet004_importdomain_gate.sh race
+```
+
+The runner builds a minimal app bundle with an embedded
+`com.apple.fileprovider-nonui` extension, then invokes
+`+[NSFileProviderManager importDomain:fromDirectoryAtURL:completionHandler:]`
+from the app executable. Output goes to:
+
+```text
+<workspace>/artifacts/runtime/packet004-importdomain/
+```
+
+Fast triage files in each run directory:
+
+```text
+app.stdout.txt
+app.stderr.txt
+caller-probe-hits.txt
+daemon-log-hits.txt
+manual-lldb-breakpoints.txt
+environment/registration-summary.txt
+```
+
+`caller-probe-hits.txt` is generated from the app process. `probe.hit` lines for
+`FPSandboxingURLWrapper` or
+`fp_issueSandboxExtensionOfClass:report:error:` are the caller-side reachability
+signal. Compare 26.4 and 26.5 path/rejection behavior before promoting anything;
+provider registration, UI setup, or daemon rejection alone is not a vulnerability
+claim.
+
+The runner removes the temporary `packet004.*` FileProvider domain after the
+call by default. Set `PACKET004_KEEP_DOMAIN=1` only when you intentionally want
+to inspect the registered domain after the run. It also unregisters the
+temporary FileProvider extension from PlugInKit by default; set
+`PACKET004_KEEP_PLUGIN=1` only when you need to inspect PlugInKit state after
+the run.
+
 ## Campaign 1 Pack Text Results
 
 ```zsh

@@ -32,3 +32,4 @@ tools/dsc_extract_bundle
 harnesses/ls-stale-state/build/
 harnesses/ls-stale-state/runs/
 harnesses/packet004-import-move/build/
+harnesses/packet004-importdomain/build/
