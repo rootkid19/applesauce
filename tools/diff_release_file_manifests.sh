@@ -25,6 +25,8 @@ ARTIFACTS="$(artifact_root)"
 BASE="$ARTIFACTS/release-manifests/$BASE_LABEL/manifest.tsv"
 PATCH="$ARTIFACTS/release-manifests/$PATCH_LABEL/manifest.tsv"
 OUT="$ARTIFACTS/release-manifests/diff-$BASE_LABEL-vs-$PATCH_LABEL"
+AWK_BIN="${APPLESAUCE_AWK:-/usr/bin/awk}"
+SORT_BIN="${APPLESAUCE_SORT:-/usr/bin/sort}"
 
 if [[ ! -f "$BASE" ]]; then
   echo "missing baseline manifest: $BASE" >&2
@@ -42,7 +44,7 @@ echo "[*] baseline: $BASE_LABEL"
 echo "[*] patched: $PATCH_LABEL"
 echo "[*] out: $OUT"
 
-awk -F '\t' '
+"$AWK_BIN" -F '\t' '
   FNR == 1 { next }
   NR == FNR {
     b[$1] = $0
@@ -73,9 +75,9 @@ awk -F '\t' '
       }
     }
   }
-' "$BASE" "$PATCH" | LC_ALL=C sort > "$OUT/manifest-diff.tsv"
+' "$BASE" "$PATCH" | LC_ALL=C "$SORT_BIN" > "$OUT/manifest-diff.tsv"
 
-awk -F '\t' 'NR > 1 { c[$2]++ } END { for (k in c) printf("- %s: %d\n", k, c[k]) }' "$OUT/manifest-diff.tsv" | sort > "$OUT/summary.md"
-awk -F '\t' 'NR > 1 && $2 != "stable" { print }' "$OUT/manifest-diff.tsv" > "$OUT/changed-added-removed.tsv"
+"$AWK_BIN" -F '\t' 'NR > 1 { c[$2]++ } END { for (k in c) printf("- %s: %d\n", k, c[k]) }' "$OUT/manifest-diff.tsv" | "$SORT_BIN" > "$OUT/summary.md"
+"$AWK_BIN" -F '\t' 'NR > 1 && $2 != "stable" { print }' "$OUT/manifest-diff.tsv" > "$OUT/changed-added-removed.tsv"
 
 echo "$OUT"

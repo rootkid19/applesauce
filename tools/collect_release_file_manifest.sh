@@ -27,6 +27,12 @@ ROOT="${2:-/}"
 ARTIFACTS="$(artifact_root)"
 OUT="$ARTIFACTS/release-manifests/$LABEL"
 HASH_MODE="${APPLESAUCE_MANIFEST_HASH:-1}"
+AWK_BIN="${APPLESAUCE_AWK:-/usr/bin/awk}"
+FIND_BIN="${APPLESAUCE_FIND:-/usr/bin/find}"
+READLINK_BIN="${APPLESAUCE_READLINK:-/usr/bin/readlink}"
+SHASUM_BIN="${APPLESAUCE_SHASUM:-/usr/bin/shasum}"
+SORT_BIN="${APPLESAUCE_SORT:-/usr/bin/sort}"
+STAT_BIN="${APPLESAUCE_STAT:-/usr/bin/stat}"
 
 if [[ ! -d "$ROOT" ]]; then
   echo "root not found: $ROOT" >&2
@@ -90,11 +96,17 @@ rel_path() {
 
 file_sha() {
   local path="$1"
+  local digest
   if [[ "$HASH_MODE" == "0" ]]; then
     echo "-"
     return
   fi
-  shasum -a 256 "$path" 2>/dev/null | awk '{print $1}'
+  digest="$("$SHASUM_BIN" -a 256 "$path" 2>/dev/null || true)"
+  if [[ -z "$digest" ]]; then
+    echo "-"
+  else
+    echo "${digest%% *}"
+  fi
 }
 
 manifest="$OUT/manifest.tsv"
@@ -110,21 +122,21 @@ manifest="$OUT/manifest.tsv"
       continue
     fi
 
-    find "$abs_root" \( -type f -o -type l \) -print 2>>"$OUT/metadata/find-errors.txt" | while IFS= read -r path; do
+    "$FIND_BIN" "$abs_root" \( -type f -o -type l \) -print 2>>"$OUT/metadata/find-errors.txt" | while IFS= read -r path; do
       rel="$(rel_path "$path")"
       if [[ -L "$path" ]]; then
-        target="$(readlink "$path" 2>/dev/null || true)"
+        target="$("$READLINK_BIN" "$path" 2>/dev/null || true)"
         printf "%s\tsymlink\t-\t-\t-\t%s\n" "$rel" "$target"
       elif [[ -f "$path" ]]; then
-        size="$(stat -f "%z" "$path" 2>/dev/null || echo "-")"
-        mtime="$(stat -f "%m" "$path" 2>/dev/null || echo "-")"
+        size="$("$STAT_BIN" -f "%z" "$path" 2>/dev/null || echo "-")"
+        mtime="$("$STAT_BIN" -f "%m" "$path" 2>/dev/null || echo "-")"
         sha="$(file_sha "$path")"
         printf "%s\tfile\t%s\t%s\t%s\t-\n" "$rel" "$size" "$mtime" "$sha"
       fi
     done
   done
-} | LC_ALL=C sort -u > "$manifest"
+} | LC_ALL=C "$SORT_BIN" -u > "$manifest"
 
-awk -F '\t' 'NR > 1 { c[$2]++ } END { for (k in c) printf("%s\t%d\n", k, c[k]) }' "$manifest" | sort > "$OUT/metadata/type-counts.tsv"
+"$AWK_BIN" -F '\t' 'NR > 1 { c[$2]++ } END { for (k in c) printf("%s\t%d\n", k, c[k]) }' "$manifest" | "$SORT_BIN" > "$OUT/metadata/type-counts.tsv"
 
 echo "$OUT"
