@@ -81,7 +81,7 @@ RUN_DIR="${RUN_DIR:-$RUN_PARENT/$(safe_sw_build_slug)-$STAMP-$MODE}"
 PREDICATE='process == "fileproviderd" OR process == "fileproviderctl" OR eventMessage CONTAINS[c] "sandbox extension" OR eventMessage CONTAINS[c] "realpath" OR eventMessage CONTAINS[c] "extendSandbox" OR eventMessage CONTAINS[c] "FileProvider"'
 
 require_cmd clang
-require_cmd log
+require_cmd /usr/bin/log
 require_cmd sw_vers
 
 mkdir -p "$RUN_DIR/environment"
@@ -103,7 +103,7 @@ echo "[*] mode: $MODE"
 } > "$RUN_DIR/run-summary.txt"
 
 LOG_STREAM="$RUN_DIR/log-stream-fileprovider.txt"
-log stream --style syslog --level debug --predicate "$PREDICATE" > "$LOG_STREAM" 2>&1 &
+/usr/bin/log stream --style syslog --level debug --predicate "$PREDICATE" > "$LOG_STREAM" 2>&1 &
 LOG_PID=$!
 
 cleanup() {
@@ -123,7 +123,7 @@ sleep 2
 cleanup
 trap - EXIT
 
-log show --style syslog --last "${LOG_SHOW_LAST:-5m}" --predicate "$PREDICATE" > "$RUN_DIR/log-show-fileprovider.txt" 2>&1 || true
+/usr/bin/log show --style syslog --last "${LOG_SHOW_LAST:-5m}" --predicate "$PREDICATE" > "$RUN_DIR/log-show-fileprovider.txt" 2>&1 || true
 
 {
   echo "run_dir=$RUN_DIR"
