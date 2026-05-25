@@ -365,6 +365,47 @@ Main output:
 <workspace>/artifacts/release-manifests/diff-26.4-vs-26.5/changed-added-removed.tsv
 ```
 
+### Packet 006 ScopedBookmark Runtime Gate
+
+Run only after the `ScopedBookmarkAgent` reverse report says to do the bounded
+runtime check. This uses controlled files and the public security-scoped
+bookmark API; it is not a protected-folder probe.
+
+On each build, start with controls:
+
+```zsh
+./tools/run_packet006_scopedbookmark_gate.sh stable
+./tools/run_packet006_scopedbookmark_gate.sh sandbox-no-bookmark
+```
+
+Then run one race mode at a time:
+
+```zsh
+./tools/run_packet006_scopedbookmark_gate.sh symlink-race
+./tools/run_packet006_scopedbookmark_gate.sh dir-race
+```
+
+Optional knobs:
+
+```zsh
+PACKET006_SCOPEDBOOKMARK_ITERATIONS=2000 ./tools/run_packet006_scopedbookmark_gate.sh symlink-race
+PACKET006_SCOPEDBOOKMARK_RACE_SLEEP_US=0 ./tools/run_packet006_scopedbookmark_gate.sh dir-race
+```
+
+Send the resulting run directories:
+
+```text
+<workspace>/artifacts/runtime/packet006-scopedbookmark/<version-build-timestamp-mode>/
+```
+
+Promotion requires a 26.4/26.5 behavior split consistent with the
+ScopedBookmarkAgent fd/bookmark validation delta. The
+`sample_to_resolved_identity_divergence` counter is only an external race signal;
+it is not proof of the agent-internal mismatch by itself. Stable controls must
+succeed on both builds, and `sandbox-no-bookmark` controls must fail or deny
+consistently. The `unentitled-stable` mode is diagnostic only because a
+nonsandboxed process can create ordinary bookmarks.
+
 ## Campaign 1 Pack Text Results
 
 ```zsh
