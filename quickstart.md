@@ -290,6 +290,7 @@ On current Tahoe 26.5:
 ```zsh
 cd /path/to/applesauce
 git pull
+./tools/collect_release_file_manifest.sh 26.5 /
 ./tools/collect_packet006_sandbox_artifacts.sh 26.5 /
 ./tools/collect_packet006_dyld_members.sh 26.5 /System/Volumes/Preboot/Cryptexes/OS/System/Library/dyld/dyld_shared_cache_arm64e
 ```
@@ -299,6 +300,7 @@ On Tahoe 26.4, if booted into it:
 ```zsh
 cd /path/to/applesauce
 git pull
+./tools/collect_release_file_manifest.sh 26.4 /
 ./tools/collect_packet006_sandbox_artifacts.sh 26.4 /
 ./tools/collect_packet006_dyld_members.sh 26.4 /System/Volumes/Preboot/Cryptexes/OS/System/Library/dyld/dyld_shared_cache_arm64e
 ```
@@ -306,6 +308,7 @@ git pull
 If 26.4 is only mounted from another boot:
 
 ```zsh
+./tools/collect_release_file_manifest.sh 26.4 /Volumes/Tahoe-26.4
 ./tools/collect_packet006_sandbox_artifacts.sh 26.4 /Volumes/Tahoe-26.4
 ./tools/collect_packet006_dyld_members.sh 26.4 /path/to/26.4/dyld_shared_cache_arm64e
 ```
@@ -315,6 +318,8 @@ Send only:
 ```text
 <workspace>/artifacts/packet006-sandbox-protected-data/26.4/
 <workspace>/artifacts/packet006-sandbox-protected-data/26.5/
+<workspace>/artifacts/release-manifests/26.4/
+<workspace>/artifacts/release-manifests/26.5/
 <workspace>/artifacts/dyld-members-packet006/26.4/metadata/
 <workspace>/artifacts/dyld-members-packet006/26.4/selected/
 <workspace>/artifacts/dyld-members-packet006/26.5/metadata/
@@ -334,6 +339,7 @@ requested members.
 After both labels are present:
 
 ```zsh
+./tools/diff_release_file_manifests.sh 26.4 26.5
 ./tools/diff_packet006_binary_truth.sh 26.4 26.5
 ```
 
@@ -342,6 +348,8 @@ Main output:
 ```text
 <workspace>/artifacts/packet006-sandbox-protected-data/diff-26.4-vs-26.5/summary.md
 <workspace>/artifacts/packet006-sandbox-protected-data/diff-26.4-vs-26.5/trees/*.tsv
+<workspace>/artifacts/release-manifests/diff-26.4-vs-26.5/summary.md
+<workspace>/artifacts/release-manifests/diff-26.4-vs-26.5/changed-added-removed.tsv
 ```
 
 ## Campaign 1 Pack Text Results
