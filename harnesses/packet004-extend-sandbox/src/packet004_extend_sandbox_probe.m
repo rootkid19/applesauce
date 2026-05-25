@@ -4,11 +4,61 @@
 #import <objc/message.h>
 #import <objc/runtime.h>
 
-static NSURL *URLFromArgument(const char *arg) {
+static NSURL *URLFromArgument(const char *arg, NSString **errorString) {
     NSString *raw = [NSString stringWithUTF8String:arg];
-    if ([raw hasPrefix:@"file://"]) {
-        return [NSURL URLWithString:raw];
+    if (raw.length == 0) {
+        if (errorString) {
+            *errorString = @"empty URL/path argument";
+        }
+        return nil;
     }
+
+    if ([raw hasPrefix:@"file://"]) {
+        if (![raw hasPrefix:@"file:///"] && ![raw hasPrefix:@"file://localhost/"]) {
+            if (errorString) {
+                *errorString = @"file URL host must be empty or localhost";
+            }
+            return nil;
+        }
+
+        NSURL *url = [NSURL URLWithString:raw];
+        NSString *urlPath = [url path];
+        if (url && [url isFileURL] && urlPath.length > 0 && [urlPath hasPrefix:@"/"]) {
+            NSString *host = [url host];
+            if (host.length > 0 && ![host isEqualToString:@"localhost"]) {
+                if (errorString) {
+                    *errorString = @"file URL host must be empty or localhost";
+                }
+                return nil;
+            }
+            return url;
+        }
+
+        NSString *path = raw;
+        if ([path hasPrefix:@"file://localhost"]) {
+            path = [path substringFromIndex:[@"file://localhost" length]];
+        } else {
+            path = [path substringFromIndex:[@"file://" length]];
+        }
+
+        path = [path stringByRemovingPercentEncoding] ?: path;
+        if (![path hasPrefix:@"/"]) {
+            if (errorString) {
+                *errorString = @"file URL did not resolve to an absolute local path";
+            }
+            return nil;
+        }
+
+        return [NSURL fileURLWithPath:[path stringByStandardizingPath]];
+    }
+
+    if ([raw containsString:@"://"]) {
+        if (errorString) {
+            *errorString = @"only local paths and file:// URLs are supported";
+        }
+        return nil;
+    }
+
     return [NSURL fileURLWithPath:[raw stringByStandardizingPath]];
 }
 
@@ -226,12 +276,18 @@ int main(int argc, const char *argv[]) {
                 Usage(argv[0]);
                 return 2;
             }
+            NSString *urlError = nil;
+            NSURL *url = URLFromArgument(argv[2], &urlError);
+            if (!url) {
+                fprintf(stderr, "invalid file-url-or-path: %s\n", [urlError UTF8String]);
+                return 2;
+            }
             BOOL readonly = YES;
             if (argc >= 4 && strcmp(argv[3], "readwrite") == 0) {
                 readonly = NO;
             }
             int repeatCount = argc >= 5 ? MAX(1, atoi(argv[4])) : 1;
-            return RunWrapper(URLFromArgument(argv[2]), readonly, repeatCount);
+            return RunWrapper(url, readonly, repeatCount);
         }
 
         if ([mode isEqualToString:@"extend"]) {
@@ -239,8 +295,14 @@ int main(int argc, const char *argv[]) {
                 Usage(argv[0]);
                 return 2;
             }
+            NSString *urlError = nil;
+            NSURL *url = URLFromArgument(argv[2], &urlError);
+            if (!url) {
+                fprintf(stderr, "invalid file-url-or-path: %s\n", [urlError UTF8String]);
+                return 2;
+            }
             int repeatCount = argc >= 6 ? MAX(1, atoi(argv[5])) : 1;
-            return RunExtend(URLFromArgument(argv[2]), StringFromArgument(argv[3]), StringFromArgument(argv[4]), repeatCount);
+            return RunExtend(url, StringFromArgument(argv[3]), StringFromArgument(argv[4]), repeatCount);
         }
 
         Usage(argv[0]);

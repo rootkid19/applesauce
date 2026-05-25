@@ -169,6 +169,10 @@ Direct broker gate:
 ./tools/run_packet004_extend_sandbox_gate.sh extend /path/to/fileprovider-domain-item com.apple.CloudDocs.iCloudDriveFileProvider com.apple.finder 1
 ```
 
+Use a quoted absolute local path when possible. The probe accepts local paths and
+local `file://` URLs only; non-file URLs and non-local file URL hosts are
+rejected before any daemon call.
+
 Promote to race testing only if `extend` reaches the daemon path and returns a
 wrapper or gets past entitlement/provider/domain checks. If it is denied before
 wrapper creation, keep Packet 004 as a static primitive and pivot to import/move

@@ -18,6 +18,7 @@ Purpose:
 Notes:
   wrapper is a helper sanity check only. The meaningful Packet 004 route is extend.
   Use a controlled FileProvider-domain URL for extend. Normal files usually fail provider/domain resolution.
+  Prefer a quoted absolute local path; only local paths and local file:// URLs are accepted.
 EOF
 }
 
