@@ -328,6 +328,20 @@ fi
   codesign -dv --entitlements :- "$EXT_BUNDLE" || true
 } > "$RUN_DIR/environment/bundle-state.txt" 2>&1
 
+LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
+if [[ -x "$LSREGISTER" ]]; then
+  {
+    echo "=== lsregister app ==="
+    "$LSREGISTER" -f "$APP_BUNDLE" || true
+    echo
+    echo "=== lsregister extension ==="
+    "$LSREGISTER" -f "$EXT_BUNDLE" || true
+  } > "$RUN_DIR/environment/lsregister.txt" 2>&1
+  echo "lsregister.available=1" > "$RUN_DIR/environment/lsregister-summary.txt"
+else
+  echo "lsregister.available=0" > "$RUN_DIR/environment/lsregister-summary.txt"
+fi
+
 if command -v pluginkit >/dev/null 2>&1; then
   {
     echo "=== pluginkit add ==="
@@ -472,6 +486,10 @@ search_hits "importDomain|addDomain|sandbox extension|realpath|FPSandboxingURLWr
   echo
   echo "=== registration summary ==="
   sed -n '1,80p' "$RUN_DIR/environment/registration-summary.txt" || true
+  sed -n '1,80p' "$RUN_DIR/environment/lsregister-summary.txt" || true
+  echo
+  echo "=== launchservices registration ==="
+  sed -n '1,80p' "$RUN_DIR/environment/lsregister.txt" || true
   echo
   echo "=== pluginkit excerpt ==="
   sed -n '1,120p' "$RUN_DIR/environment/pluginkit.txt" || true

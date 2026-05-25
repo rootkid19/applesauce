@@ -232,6 +232,15 @@ git pull
 ./tools/run_packet004_importdomain_gate.sh symlink-leaf
 ```
 
+If a 26.4 run reports `ProviderNotRegistered`, rerun the two-mode matrix with
+the temporary PlugInKit registration kept across both runs:
+
+```zsh
+PACKET004_KEEP_PLUGIN=1 PACKET004_IMPORTDOMAIN_PREFLIGHT_SLEEP=3 ./tools/run_packet004_importdomain_gate.sh normal
+PACKET004_KEEP_PLUGIN=1 PACKET004_IMPORTDOMAIN_PREFLIGHT_SLEEP=3 ./tools/run_packet004_importdomain_gate.sh symlink-leaf
+/usr/bin/pluginkit -r "$(pwd)/harnesses/packet004-importdomain/build/Packet004ImportDomainHarness.app/Contents/PlugIns/Packet004FileProviderExtension.appex"
+```
+
 Optional local swap loop, confined to the run directory:
 
 ```zsh
