@@ -90,7 +90,62 @@ full-extract/
 members/
 ```
 
-## Pack Text Results
+## Packet 004 FileProvider
+
+On current Tahoe 26.5:
+
+```zsh
+cd /path/to/applesauce
+git pull
+./tools/collect_packet004_fileprovider_artifacts.sh 26.5 /
+./tools/collect_packet004_dyld_members.sh 26.5 /System/Volumes/Preboot/Cryptexes/OS/System/Library/dyld/dyld_shared_cache_arm64e
+```
+
+On Tahoe 26.4, if booted into it:
+
+```zsh
+cd /path/to/applesauce
+git pull
+./tools/collect_packet004_fileprovider_artifacts.sh 26.4 /
+./tools/collect_packet004_dyld_members.sh 26.4 /System/Volumes/Preboot/Cryptexes/OS/System/Library/dyld/dyld_shared_cache_arm64e
+```
+
+If 26.4 is only mounted from another boot, pass the mounted system root for
+standalone artifacts and point the dyld script at the full 26.4
+`dyld_shared_cache_arm64e` path you copied or mounted:
+
+```zsh
+./tools/collect_packet004_fileprovider_artifacts.sh 26.4 /Volumes/Tahoe-26.4
+./tools/collect_packet004_dyld_members.sh 26.4 /path/to/26.4/dyld_shared_cache_arm64e
+```
+
+Send only:
+
+```text
+<workspace>/artifacts/packet004-fileprovider/26.4/metadata/
+<workspace>/artifacts/packet004-fileprovider/26.4/analysis/
+<workspace>/artifacts/packet004-fileprovider/26.4/standalone/
+<workspace>/artifacts/packet004-fileprovider/26.5/metadata/
+<workspace>/artifacts/packet004-fileprovider/26.5/analysis/
+<workspace>/artifacts/packet004-fileprovider/26.5/standalone/
+<workspace>/artifacts/dyld-members-packet004/26.4/metadata/
+<workspace>/artifacts/dyld-members-packet004/26.4/selected/
+<workspace>/artifacts/dyld-members-packet004/26.5/metadata/
+<workspace>/artifacts/dyld-members-packet004/26.5/selected/
+```
+
+Do not send Packet 004 dyld:
+
+```text
+full-extract/
+members/
+```
+
+The Packet 004 dyld script removes fallback `full-extract/` by default after
+copying the selected members. Set `APPLESAUCE_KEEP_FULL_EXTRACT=1` only if you
+explicitly need the complete extraction tree.
+
+## Campaign 1 Pack Text Results
 
 ```zsh
 cd /path/to/applesauce
