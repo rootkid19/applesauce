@@ -7,6 +7,8 @@ Clone anywhere. By default output goes next to the repo:
 <workspace>/artifacts
 ```
 
+For static Mach-O reverse-engineering helpers, see `static-re.md`.
+
 ## Host State
 
 Run once after booting the target OS:
