@@ -26,6 +26,24 @@ cd /path/to/applesauce
 ./tools/run_campaign1_stock_gate.sh background
 ```
 
+## Force-Quit Gate
+
+Run once on Tahoe 26.3 and once on Tahoe 26.4:
+
+```zsh
+cd /path/to/applesauce
+git pull
+./tools/run_campaign1_forcequit_gate.sh background
+```
+
+When prompted, force quit `LSStaleParent` from Dock or Apple menu > Force Quit.
+
+Optional loaded-job variant:
+
+```zsh
+./tools/run_campaign1_forcequit_gate.sh pidjob
+```
+
 ## Dyld Member Extraction
 
 On Tahoe 26.3:

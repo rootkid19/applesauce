@@ -361,8 +361,15 @@ int main(int argc, const char *argv[]) {
 
         EnsureDirectory(stateDir);
 
+        NSString *activationPolicy = ArgValue(args, @"--activation-policy", @"accessory");
+
         [NSApplication sharedApplication];
-        [NSApp setActivationPolicy:NSApplicationActivationPolicyAccessory];
+        if ([activationPolicy isEqualToString:@"regular"]) {
+            [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
+            [NSApp activateIgnoringOtherApps:YES];
+        } else {
+            [NSApp setActivationPolicy:NSApplicationActivationPolicyAccessory];
+        }
 
         NSString *logPath = [stateDir stringByAppendingPathComponent:@"state.log"];
         NSString *pidPath = [stateDir stringByAppendingPathComponent:[NSString stringWithFormat:@"parent-%@.pid", phase]];
