@@ -207,6 +207,18 @@ Promote only if the run shows operation-attributable
 `wrapperWithURL`, or `fp_issueSandboxExtension` activity. Successful file
 copy/move by itself is not enough.
 
+Fast triage files in each run directory:
+
+```text
+target-writer-helper-hits.txt
+sibling-provider-hits.txt
+```
+
+`target-writer-helper-hits.txt` is the promotion signal. The sibling file is
+useful context for CloudDocs/Finder scoped URL paths, but it is not enough to
+start race testing. These two files are generated from the live log stream for
+the current run; use `log-show-fileprovider.txt` only as backfill context.
+
 ## Campaign 1 Pack Text Results
 
 ```zsh

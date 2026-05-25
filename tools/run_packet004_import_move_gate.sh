@@ -180,6 +180,8 @@ STAMP="$(timestamp_utc)"
 RUN_PARENT="$ARTIFACTS/runtime/packet004-import-move"
 RUN_DIR="${RUN_DIR:-$RUN_PARENT/$(safe_sw_build_slug)-$STAMP-$MODE}"
 PREDICATE='process == "fileproviderd" OR process == "fileproviderctl" OR process == "Finder" OR process == "bird" OR process == "cloudd" OR eventMessage CONTAINS[c] "FPDMoveWriterToProvider" OR eventMessage CONTAINS[c] "_importURL" OR eventMessage CONTAINS[c] "FPSandboxingURLWrapper" OR eventMessage CONTAINS[c] "wrapperWithURL" OR eventMessage CONTAINS[c] "fp_issueSandboxExtension" OR eventMessage CONTAINS[c] "sandbox extension" OR eventMessage CONTAINS[c] "realpath" OR eventMessage CONTAINS[c] "createItem" OR eventMessage CONTAINS[c] "modifyItem" OR eventMessage CONTAINS[c] "packet004"'
+TARGET_HIT_PATTERN='FPDMoveWriterToProvider|_importURL|FPSandboxingURLWrapper|wrapperWithURL|fp_issueSandboxExtension|sandbox_extension_issue_file'
+SIBLING_HIT_PATTERN='consumeSandboxFileSystemHash|attaching sandbox extension|scoped|FileURL|modifyItem|createItem|CloudDocs.iCloudDriveFileProvider|BRCFSImporter|FileProvider:default|action finished|sandbox extension'
 
 require_cmd clang
 require_cmd /usr/bin/log
@@ -244,6 +246,14 @@ trap - EXIT
 
 /usr/bin/log show --style syslog --last "${LOG_SHOW_LAST:-8m}" --predicate "$PREDICATE" > "$RUN_DIR/log-show-fileprovider.txt" 2>&1 || true
 
+rg -n "$TARGET_HIT_PATTERN" "$RUN_DIR/log-stream-fileprovider.txt" \
+  | rg -v 'Filtering the log data using|predicate=' \
+  > "$RUN_DIR/target-writer-helper-hits.txt" 2>/dev/null || true
+
+rg -n "$SIBLING_HIT_PATTERN" "$RUN_DIR/log-stream-fileprovider.txt" \
+  | rg -v 'Filtering the log data using|predicate=' \
+  > "$RUN_DIR/sibling-provider-hits.txt" 2>/dev/null || true
+
 {
   echo "run_dir=$RUN_DIR"
   echo "mode=$MODE"
@@ -272,6 +282,18 @@ trap - EXIT
   echo "=== fileprovider log hints ==="
   rg -n "FPDMoveWriterToProvider|_importURL|FPSandboxingURLWrapper|wrapperWithURL|fp_issueSandboxExtension|sandbox_extension_issue_file|sandbox extension|realpath|createItem|modifyItem|packet004|denied|deny|error" "$RUN_DIR/log-stream-fileprovider.txt" "$RUN_DIR/log-show-fileprovider.txt" > "$RUN_DIR/log-hits.txt" 2>&1 || true
   sed -n '1,160p' "$RUN_DIR/log-hits.txt" || true
+  echo
+  echo "=== target writer/helper hits ==="
+  echo "source=live log stream for this run"
+  echo "file=$RUN_DIR/target-writer-helper-hits.txt"
+  echo "count=$(wc -l < "$RUN_DIR/target-writer-helper-hits.txt" | tr -d ' ')"
+  sed -n '1,120p' "$RUN_DIR/target-writer-helper-hits.txt" || true
+  echo
+  echo "=== sibling provider/scoped-url hits ==="
+  echo "source=live log stream for this run"
+  echo "file=$RUN_DIR/sibling-provider-hits.txt"
+  echo "count=$(wc -l < "$RUN_DIR/sibling-provider-hits.txt" | tr -d ' ')"
+  sed -n '1,120p' "$RUN_DIR/sibling-provider-hits.txt" || true
   echo
   echo "Decision rule:"
   echo "- promote only if this run shows FPDMoveWriterToProvider/_importURL or wrapper/helper activity attributable to the controlled operation."
