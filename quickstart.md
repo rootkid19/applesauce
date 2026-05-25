@@ -285,6 +285,11 @@ the run.
 
 Run from a normal Terminal. This is collection only, not a runtime probe.
 
+The release manifest hashes a broad system slice. It can take several minutes.
+The script prints per-root progress. For a fast metadata-only manifest, prefix
+the command with `APPLESAUCE_MANIFEST_HASH=0`; use full hash mode for the final
+comparison.
+
 On current Tahoe 26.5:
 
 ```zsh

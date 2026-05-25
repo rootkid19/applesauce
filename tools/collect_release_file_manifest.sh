@@ -16,6 +16,8 @@ Builds a broad system-code/config file manifest for first-mile changed-artifact
 selection. It is intentionally broader than packet-specific collectors.
 
 Set APPLESAUCE_MANIFEST_HASH=0 to skip sha256 hashing and collect metadata only.
+Set APPLESAUCE_MANIFEST_ROOTS to a colon-separated root list to override the
+default broad roots.
 EOF
   exit 2
 }
@@ -28,11 +30,15 @@ ARTIFACTS="$(artifact_root)"
 OUT="$ARTIFACTS/release-manifests/$LABEL"
 HASH_MODE="${APPLESAUCE_MANIFEST_HASH:-1}"
 AWK_BIN="${APPLESAUCE_AWK:-/usr/bin/awk}"
+DATE_BIN="${APPLESAUCE_DATE:-/bin/date}"
 FIND_BIN="${APPLESAUCE_FIND:-/usr/bin/find}"
+PLUTIL_BIN="${APPLESAUCE_PLUTIL:-/usr/bin/plutil}"
 READLINK_BIN="${APPLESAUCE_READLINK:-/usr/bin/readlink}"
+RM_BIN="${APPLESAUCE_RM:-/bin/rm}"
 SHASUM_BIN="${APPLESAUCE_SHASUM:-/usr/bin/shasum}"
 SORT_BIN="${APPLESAUCE_SORT:-/usr/bin/sort}"
 STAT_BIN="${APPLESAUCE_STAT:-/usr/bin/stat}"
+SW_VERS_BIN="${APPLESAUCE_SW_VERS:-/usr/bin/sw_vers}"
 
 if [[ ! -d "$ROOT" ]]; then
   echo "root not found: $ROOT" >&2
@@ -51,11 +57,11 @@ echo "[*] hash mode: $HASH_MODE"
   echo "label=$LABEL"
   echo "root=$ROOT"
   echo "hash_mode=$HASH_MODE"
-  date -u +"date_utc=%Y-%m-%dT%H:%M:%SZ"
+  "$DATE_BIN" -u +"date_utc=%Y-%m-%dT%H:%M:%SZ"
   if [[ "$ROOT" == "/" ]]; then
-    sw_vers 2>/dev/null || true
+    "$SW_VERS_BIN" 2>/dev/null || true
   elif [[ -f "$ROOT/System/Library/CoreServices/SystemVersion.plist" ]]; then
-    plutil -p "$ROOT/System/Library/CoreServices/SystemVersion.plist" 2>/dev/null || true
+    "$PLUTIL_BIN" -p "$ROOT/System/Library/CoreServices/SystemVersion.plist" 2>/dev/null || true
   fi
 } > "$OUT/metadata/manifest-context.txt" 2>&1
 
@@ -74,6 +80,10 @@ ROOTS=(
   "/usr/lib"
   "/usr/libexec"
 )
+
+if [[ -n "${APPLESAUCE_MANIFEST_ROOTS:-}" ]]; then
+  ROOTS=("${(@s/:/)APPLESAUCE_MANIFEST_ROOTS}")
+fi
 
 root_join() {
   local rel="$1"
@@ -110,8 +120,10 @@ file_sha() {
 }
 
 manifest="$OUT/manifest.tsv"
+unsorted="$OUT/manifest.unsorted.tsv"
 : > "$OUT/metadata/missing-roots.txt"
 : > "$OUT/metadata/find-errors.txt"
+: > "$OUT/metadata/progress.log"
 
 {
   printf "path\ttype\tsize\tmtime_epoch\tsha256\tsymlink_target\n"
@@ -121,6 +133,10 @@ manifest="$OUT/manifest.tsv"
       echo "$rel_root" >> "$OUT/metadata/missing-roots.txt"
       continue
     fi
+
+    started="$("$DATE_BIN" -u +"%Y-%m-%dT%H:%M:%SZ")"
+    echo "[*] scanning $rel_root ($started)" >&2
+    echo "start	$started	$rel_root" >> "$OUT/metadata/progress.log"
 
     "$FIND_BIN" "$abs_root" \( -type f -o -type l \) -print 2>>"$OUT/metadata/find-errors.txt" | while IFS= read -r path; do
       rel="$(rel_path "$path")"
@@ -134,9 +150,18 @@ manifest="$OUT/manifest.tsv"
         printf "%s\tfile\t%s\t%s\t%s\t-\n" "$rel" "$size" "$mtime" "$sha"
       fi
     done
+
+    finished="$("$DATE_BIN" -u +"%Y-%m-%dT%H:%M:%SZ")"
+    echo "[*] finished $rel_root ($finished)" >&2
+    echo "finish	$finished	$rel_root" >> "$OUT/metadata/progress.log"
   done
-} | LC_ALL=C "$SORT_BIN" -u > "$manifest"
+} > "$unsorted"
+
+echo "[*] sorting manifest" >&2
+LC_ALL=C "$SORT_BIN" -u "$unsorted" > "$manifest"
 
 "$AWK_BIN" -F '\t' 'NR > 1 { c[$2]++ } END { for (k in c) printf("%s\t%d\n", k, c[k]) }' "$manifest" | "$SORT_BIN" > "$OUT/metadata/type-counts.tsv"
+
+"$RM_BIN" -f "$unsorted"
 
 echo "$OUT"
