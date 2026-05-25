@@ -31,3 +31,4 @@ tools/dsc_extract_bundle
 # Generated harness output.
 harnesses/ls-stale-state/build/
 harnesses/ls-stale-state/runs/
+harnesses/packet004-import-move/build/

@@ -178,6 +178,35 @@ wrapper or gets past entitlement/provider/domain checks. If it is denied before
 wrapper creation, keep Packet 004 as a static primitive and pivot to import/move
 wrappers or the deletion/revival lane.
 
+## Packet 004 Import/Move Gate
+
+Run from a normal Terminal.
+
+```zsh
+cd /path/to/applesauce
+git pull
+./tools/run_packet004_import_move_gate.sh all
+./tools/run_packet004_import_move_gate.sh finder-all
+```
+
+Default target:
+
+```text
+~/Library/Mobile Documents/com~apple~CloudDocs/Packet004ImportMoveGate
+```
+
+Useful single-mode reruns:
+
+```zsh
+./tools/run_packet004_import_move_gate.sh finder-copy
+./tools/run_packet004_import_move_gate.sh finder-move
+```
+
+Promote only if the run shows operation-attributable
+`FPDMoveWriterToProvider`, `_importURL`, `FPSandboxingURLWrapper`,
+`wrapperWithURL`, or `fp_issueSandboxExtension` activity. Successful file
+copy/move by itself is not enough.
+
 ## Campaign 1 Pack Text Results
 
 ```zsh
