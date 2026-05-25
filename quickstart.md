@@ -145,6 +145,35 @@ The Packet 004 dyld script removes fallback `full-extract/` by default after
 copying the selected members. Set `APPLESAUCE_KEEP_FULL_EXTRACT=1` only if you
 explicitly need the complete extraction tree.
 
+## Packet 004 Extend-Sandbox Gate
+
+Run from a normal Terminal, not from inside Codex's sandbox.
+
+First check daemon route visibility:
+
+```zsh
+cd /path/to/applesauce
+git pull
+./tools/run_packet004_extend_sandbox_gate.sh list
+```
+
+Helper-only sanity check:
+
+```zsh
+./tools/run_packet004_extend_sandbox_gate.sh wrapper /path/to/test-file readonly 1
+```
+
+Direct broker gate:
+
+```zsh
+./tools/run_packet004_extend_sandbox_gate.sh extend /path/to/fileprovider-domain-item com.apple.CloudDocs.iCloudDriveFileProvider com.apple.finder 1
+```
+
+Promote to race testing only if `extend` reaches the daemon path and returns a
+wrapper or gets past entitlement/provider/domain checks. If it is denied before
+wrapper creation, keep Packet 004 as a static primitive and pivot to import/move
+wrappers or the deletion/revival lane.
+
 ## Campaign 1 Pack Text Results
 
 ```zsh
