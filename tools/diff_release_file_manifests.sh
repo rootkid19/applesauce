@@ -26,6 +26,8 @@ BASE="$ARTIFACTS/release-manifests/$BASE_LABEL/manifest.tsv"
 PATCH="$ARTIFACTS/release-manifests/$PATCH_LABEL/manifest.tsv"
 OUT="$ARTIFACTS/release-manifests/diff-$BASE_LABEL-vs-$PATCH_LABEL"
 AWK_BIN="${APPLESAUCE_AWK:-/usr/bin/awk}"
+CAT_BIN="${APPLESAUCE_CAT:-/bin/cat}"
+RM_BIN="${APPLESAUCE_RM:-/bin/rm}"
 SORT_BIN="${APPLESAUCE_SORT:-/usr/bin/sort}"
 
 if [[ ! -f "$BASE" ]]; then
@@ -43,6 +45,9 @@ mkdir -p "$OUT"
 echo "[*] baseline: $BASE_LABEL"
 echo "[*] patched: $PATCH_LABEL"
 echo "[*] out: $OUT"
+
+diff_data="$OUT/manifest-diff.data.tsv"
+diff_sorted="$OUT/manifest-diff.sorted.tsv"
 
 "$AWK_BIN" -F '\t' '
   FNR == 1 { next }
@@ -62,7 +67,6 @@ echo "[*] out: $OUT"
     seen[$1] = 1
   }
   END {
-    print "path\tresult\tbaseline_type\tpatched_type\tbaseline_size\tpatched_size\tbaseline_sha256\tpatched_sha256"
     for (path in seen) {
       if (!(path in b)) {
         print path "\tadded\t-\t" p_type[path] "\t-\t" p_size[path] "\t-\t" p_sha[path]
@@ -75,9 +79,18 @@ echo "[*] out: $OUT"
       }
     }
   }
-' "$BASE" "$PATCH" | LC_ALL=C "$SORT_BIN" > "$OUT/manifest-diff.tsv"
+' "$BASE" "$PATCH" > "$diff_data"
+
+LC_ALL=C "$SORT_BIN" "$diff_data" > "$diff_sorted"
+
+{
+  printf "path\tresult\tbaseline_type\tpatched_type\tbaseline_size\tpatched_size\tbaseline_sha256\tpatched_sha256\n"
+  "$CAT_BIN" "$diff_sorted"
+} > "$OUT/manifest-diff.tsv"
 
 "$AWK_BIN" -F '\t' 'NR > 1 { c[$2]++ } END { for (k in c) printf("- %s: %d\n", k, c[k]) }' "$OUT/manifest-diff.tsv" | "$SORT_BIN" > "$OUT/summary.md"
 "$AWK_BIN" -F '\t' 'NR > 1 && $2 != "stable" { print }' "$OUT/manifest-diff.tsv" > "$OUT/changed-added-removed.tsv"
+
+"$RM_BIN" -f "$diff_data" "$diff_sorted"
 
 echo "$OUT"

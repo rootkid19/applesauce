@@ -30,6 +30,7 @@ ARTIFACTS="$(artifact_root)"
 OUT="$ARTIFACTS/release-manifests/$LABEL"
 HASH_MODE="${APPLESAUCE_MANIFEST_HASH:-1}"
 AWK_BIN="${APPLESAUCE_AWK:-/usr/bin/awk}"
+CAT_BIN="${APPLESAUCE_CAT:-/bin/cat}"
 DATE_BIN="${APPLESAUCE_DATE:-/bin/date}"
 FIND_BIN="${APPLESAUCE_FIND:-/usr/bin/find}"
 PLUTIL_BIN="${APPLESAUCE_PLUTIL:-/usr/bin/plutil}"
@@ -108,25 +109,25 @@ file_sha() {
   local path="$1"
   local digest
   if [[ "$HASH_MODE" == "0" ]]; then
-    echo "-"
+    printf "%s\n" "-"
     return
   fi
   digest="$("$SHASUM_BIN" -a 256 "$path" 2>/dev/null || true)"
   if [[ -z "$digest" ]]; then
-    echo "-"
+    printf "%s\n" "-"
   else
-    echo "${digest%% *}"
+    printf "%s\n" "${digest%% *}"
   fi
 }
 
 manifest="$OUT/manifest.tsv"
-unsorted="$OUT/manifest.unsorted.tsv"
+unsorted="$OUT/manifest.data.unsorted.tsv"
+sorted_data="$OUT/manifest.data.sorted.tsv"
 : > "$OUT/metadata/missing-roots.txt"
 : > "$OUT/metadata/find-errors.txt"
 : > "$OUT/metadata/progress.log"
 
 {
-  printf "path\ttype\tsize\tmtime_epoch\tsha256\tsymlink_target\n"
   for rel_root in "${ROOTS[@]}"; do
     abs_root="$(root_join "$rel_root")"
     if [[ ! -d "$abs_root" ]]; then
@@ -158,10 +159,15 @@ unsorted="$OUT/manifest.unsorted.tsv"
 } > "$unsorted"
 
 echo "[*] sorting manifest" >&2
-LC_ALL=C "$SORT_BIN" -u "$unsorted" > "$manifest"
+LC_ALL=C "$SORT_BIN" -u "$unsorted" > "$sorted_data"
+
+{
+  printf "path\ttype\tsize\tmtime_epoch\tsha256\tsymlink_target\n"
+  "$CAT_BIN" "$sorted_data"
+} > "$manifest"
 
 "$AWK_BIN" -F '\t' 'NR > 1 { c[$2]++ } END { for (k in c) printf("%s\t%d\n", k, c[k]) }' "$manifest" | "$SORT_BIN" > "$OUT/metadata/type-counts.tsv"
 
-"$RM_BIN" -f "$unsorted"
+"$RM_BIN" -f "$unsorted" "$sorted_data"
 
 echo "$OUT"
