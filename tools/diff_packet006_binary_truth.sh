@@ -1,5 +1,6 @@
 #!/bin/zsh
 set -euo pipefail
+setopt typeset_silent
 
 source "$(cd "$(dirname "$0")" && pwd)/common.sh"
 
@@ -27,6 +28,14 @@ PATCH_ROOT="$ARTIFACTS/packet006-sandbox-protected-data/$PATCH_LABEL"
 BASE_DYLD="$ARTIFACTS/dyld-members-packet006/$BASE_LABEL/selected"
 PATCH_DYLD="$ARTIFACTS/dyld-members-packet006/$PATCH_LABEL/selected"
 OUT="$ARTIFACTS/packet006-sandbox-protected-data/diff-$BASE_LABEL-vs-$PATCH_LABEL"
+AWK_BIN="${APPLESAUCE_AWK:-/usr/bin/awk}"
+BASENAME_BIN="${APPLESAUCE_BASENAME:-/usr/bin/basename}"
+CMP_BIN="${APPLESAUCE_CMP:-/usr/bin/cmp}"
+DATE_BIN="${APPLESAUCE_DATE:-/bin/date}"
+FIND_BIN="${APPLESAUCE_FIND:-/usr/bin/find}"
+SED_BIN="${APPLESAUCE_SED:-/usr/bin/sed}"
+SHASUM_BIN="${APPLESAUCE_SHASUM:-/usr/bin/shasum}"
+SORT_BIN="${APPLESAUCE_SORT:-/usr/bin/sort}"
 
 if [[ ! -d "$BASE_ROOT" ]]; then
   echo "missing baseline artifacts: $BASE_ROOT" >&2
@@ -51,15 +60,21 @@ echo "[*] out: $OUT"
   echo "patched_root=$PATCH_ROOT"
   echo "baseline_dyld=$BASE_DYLD"
   echo "patched_dyld=$PATCH_DYLD"
-  date -u +"date_utc=%Y-%m-%dT%H:%M:%SZ"
+  "$DATE_BIN" -u +"date_utc=%Y-%m-%dT%H:%M:%SZ"
 } > "$OUT/metadata/diff-context.txt"
 
 sha_or_dash() {
   local path="$1"
+  local digest
   if [[ -f "$path" ]]; then
-    shasum -a 256 "$path" | awk '{print $1}'
+    digest="$("$SHASUM_BIN" -a 256 "$path" 2>/dev/null || true)"
+    if [[ -z "$digest" ]]; then
+      printf "%s\n" "-"
+    else
+      printf "%s\n" "${digest%% *}"
+    fi
   else
-    echo "-"
+    printf "%s\n" "-"
   fi
 }
 
@@ -76,14 +91,14 @@ compare_tree() {
   : > "$right_list"
 
   if [[ -d "$left" ]]; then
-    (cd "$left" && find . -type f -print | sed 's#^\./##' | sort) > "$left_list"
+    (cd "$left" && "$FIND_BIN" . -type f -print | "$SED_BIN" 's#^\./##' | "$SORT_BIN") > "$left_list"
   fi
 
   if [[ -d "$right" ]]; then
-    (cd "$right" && find . -type f -print | sed 's#^\./##' | sort) > "$right_list"
+    (cd "$right" && "$FIND_BIN" . -type f -print | "$SED_BIN" 's#^\./##' | "$SORT_BIN") > "$right_list"
   fi
 
-  sort -u "$left_list" "$right_list" > "$all_list"
+  "$SORT_BIN" -u "$left_list" "$right_list" > "$all_list"
 
   {
     printf "category\tpath\tresult\tbaseline_sha256\tpatched_sha256\n"
@@ -91,10 +106,10 @@ compare_tree() {
       [[ -n "$rel" ]] || continue
       local left_path="$left/$rel"
       local right_path="$right/$rel"
-      local result
+      local result=""
 
       if [[ -f "$left_path" && -f "$right_path" ]]; then
-        if cmp -s "$left_path" "$right_path"; then
+        if "$CMP_BIN" -s "$left_path" "$right_path"; then
           result="identical"
         else
           result="changed"
@@ -128,9 +143,9 @@ fi
   echo
   for tsv in "$OUT"/trees/*.tsv; do
     [[ -f "$tsv" ]] || continue
-    name="$(basename "$tsv" .tsv)"
+    name="$("$BASENAME_BIN" "$tsv" .tsv)"
     echo "## $name"
-    awk -F '\t' 'NR > 1 { c[$3]++ } END { for (k in c) printf("- %s: %d\n", k, c[k]) }' "$tsv" | sort
+    "$AWK_BIN" -F '\t' 'NR > 1 { c[$3]++ } END { for (k in c) printf("- %s: %d\n", k, c[k]) }' "$tsv" | "$SORT_BIN"
     echo
   done
 } > "$OUT/summary.md"

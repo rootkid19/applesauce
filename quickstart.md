@@ -310,6 +310,14 @@ git pull
 ./tools/collect_packet006_dyld_members.sh 26.4 /System/Volumes/Preboot/Cryptexes/OS/System/Library/dyld/dyld_shared_cache_arm64e
 ```
 
+If you already ran the 26.4 collector before the ScopedBookmarkAgent review,
+rerun at least this after `git pull`; the focused list now includes the changed
+feature flags and helper/XPC surfaces found by the broad manifest:
+
+```zsh
+./tools/collect_packet006_sandbox_artifacts.sh 26.4 /
+```
+
 If 26.4 is only mounted from another boot:
 
 ```zsh
