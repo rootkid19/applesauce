@@ -281,6 +281,69 @@ temporary FileProvider extension from PlugInKit by default; set
 `PACKET004_KEEP_PLUGIN=1` only when you need to inspect PlugInKit state after
 the run.
 
+## Packet 006 Sandbox Protected Data
+
+Run from a normal Terminal. This is collection only, not a runtime probe.
+
+On current Tahoe 26.5:
+
+```zsh
+cd /path/to/applesauce
+git pull
+./tools/collect_packet006_sandbox_artifacts.sh 26.5 /
+./tools/collect_packet006_dyld_members.sh 26.5 /System/Volumes/Preboot/Cryptexes/OS/System/Library/dyld/dyld_shared_cache_arm64e
+```
+
+On Tahoe 26.4, if booted into it:
+
+```zsh
+cd /path/to/applesauce
+git pull
+./tools/collect_packet006_sandbox_artifacts.sh 26.4 /
+./tools/collect_packet006_dyld_members.sh 26.4 /System/Volumes/Preboot/Cryptexes/OS/System/Library/dyld/dyld_shared_cache_arm64e
+```
+
+If 26.4 is only mounted from another boot:
+
+```zsh
+./tools/collect_packet006_sandbox_artifacts.sh 26.4 /Volumes/Tahoe-26.4
+./tools/collect_packet006_dyld_members.sh 26.4 /path/to/26.4/dyld_shared_cache_arm64e
+```
+
+Send only:
+
+```text
+<workspace>/artifacts/packet006-sandbox-protected-data/26.4/
+<workspace>/artifacts/packet006-sandbox-protected-data/26.5/
+<workspace>/artifacts/dyld-members-packet006/26.4/metadata/
+<workspace>/artifacts/dyld-members-packet006/26.4/selected/
+<workspace>/artifacts/dyld-members-packet006/26.5/metadata/
+<workspace>/artifacts/dyld-members-packet006/26.5/selected/
+```
+
+Do not send Packet 006 dyld:
+
+```text
+full-extract/
+members/
+```
+
+The dyld script removes fallback `full-extract/` by default after selecting the
+requested members.
+
+After both labels are present:
+
+```zsh
+./tools/diff_packet006_binary_truth.sh 26.4 26.5
+```
+
+Main output:
+
+```text
+<workspace>/artifacts/packet006-sandbox-protected-data/diff-26.4-vs-26.5/summary.md
+<workspace>/artifacts/packet006-sandbox-protected-data/diff-26.4-vs-26.5/trees/*.tsv
+```
+
 ## Campaign 1 Pack Text Results
 
 ```zsh
