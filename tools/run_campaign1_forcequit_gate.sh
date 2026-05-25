@@ -73,7 +73,21 @@ fi
   echo "scenario=$SCENARIO"
   echo
   echo "=== force quit / death / liveness hints ==="
-  rg -n "ForceQuit|force quit|DEATH:|SESSION-REMOVEAPP|EXITED|final termination|remaining coalition|non-foreground child|loaded job|copyJobsLoadedByCoalition|AllRelatedApplicationASNs|ExitedButHasRemaining" "$RUN_DIR" || true
+  HITS="$RUN_DIR/forcequit-gate-hits.txt"
+  CANDIDATES=(
+    "$RUN_DIR/lsappinfo-listen.txt"
+    "$RUN_DIR/log-show-launchservicesd-filtered.txt"
+    "$RUN_DIR/log-stream-launchservicesd-filtered.txt"
+    "$RUN_DIR"/after-parent-helper-start/lsappinfo-only-*.txt(N)
+    "$RUN_DIR"/during-forcequit-*/lsappinfo-only-*.txt(N)
+    "$RUN_DIR"/after-forcequit-window/lsappinfo-only-*.txt(N)
+  )
+  rg -n "ForceQuit|force quit|DEATH:|SESSION-REMOVEAPP|EXITED|final termination|remaining coalition|non-foreground child|loaded job|copyJobsLoadedByCoalition|AllRelatedApplicationASNs|ExitedButHasRemaining|kLSNotifyApplicationAbnormalDeath|kLSNotifyApplicationDeath|LSExitStatus" "${CANDIDATES[@]}" > "$HITS" 2>&1 || true
+  sed -n '1,80p' "$HITS" || true
+  total_hits="$(wc -l < "$HITS" 2>/dev/null || echo 0)"
+  if [[ "$total_hits" != "0" && "$total_hits" -gt 80 ]]; then
+    echo "... truncated summary; full hits in $HITS"
+  fi
   echo
   echo "=== parent/helper state files ==="
   find "$RUN_DIR" -maxdepth 2 -type f \( -name '*.pid' -o -name '*.done' -o -name 'state.log' -o -name 'run-summary.txt' \) -print || true
