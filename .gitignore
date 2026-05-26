@@ -28,6 +28,11 @@ dyld/
 *.local
 tools/dsc_extract_bundle
 
+static-sequela.md
+tools/reverse_emit_units.py
+tools/reverse_packet_unit.py
+tools/reverse_rank_units.py
+
 # Generated harness output.
 harnesses/ls-stale-state/build/
 harnesses/ls-stale-state/runs/
