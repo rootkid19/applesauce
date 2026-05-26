@@ -14,8 +14,9 @@ examples:
 
 Extracts Packet 004 dyld-cache members. The selected list is FileProvider /
 materialization specific, with CloudDocs/iCloud and Storage as watchlist members
-only. The fallback extractor expands the full cache first; expect disk use.
-Set APPLESAUCE_KEEP_FULL_EXTRACT=1 to keep fallback full-extract output.
+only. Prefers ipsw (brew install blacktop/tap/ipsw) for --objc --stubs
+enrichment. The dsc_extract_bundle fallback expands the full cache first; expect
+disk use. Set APPLESAUCE_KEEP_FULL_EXTRACT=1 to keep fallback full-extract output.
 EOF
   exit 2
 }
@@ -64,8 +65,13 @@ MEMBERS=(
   "/System/Library/PrivateFrameworks/StorageContainersPrivate.framework/Versions/A/StorageContainersPrivate"
 )
 
+# Write requested member list before extraction starts.
+printf '%s\n' "${MEMBERS[@]}" > "$OUT/metadata/requested-members.txt"
+
 extractor=""
-if command -v dyld_shared_cache_util >/dev/null 2>&1; then
+if command -v ipsw >/dev/null 2>&1; then
+  extractor="ipsw"
+elif command -v dyld_shared_cache_util >/dev/null 2>&1; then
   extractor="dyld_shared_cache_util"
 elif command -v dsc_extractor >/dev/null 2>&1; then
   extractor="dsc_extractor"
@@ -80,7 +86,10 @@ if [[ -z "$extractor" ]]; then
   cat > "$OUT/metadata/extraction-blocked.txt" <<'EOF'
 No supported extractor found in PATH.
 
-Install or build one of:
+Preferred (install via Homebrew):
+  brew install blacktop/tap/ipsw
+
+Or install/build one of:
 - dyld_shared_cache_util
 - dsc_extractor
 - /usr/lib/dsc_extractor.bundle wrapper via tools/build_dsc_extractor_bundle_wrapper.sh
@@ -89,8 +98,22 @@ EOF
   exit 1
 fi
 
+# Write extractor identity metadata.
+{
+  echo "extractor=$extractor"
+  if [[ "$extractor" == "ipsw" ]]; then
+    ipsw version 2>/dev/null || echo "version=unknown"
+  else
+    echo "version=n/a"
+  fi
+  echo "cache=$CACHE"
+} > "$OUT/metadata/extractor.txt"
+
 print_member_list() {
   case "$extractor" in
+    ipsw)
+      ipsw dyld info --dylibs --no-color "$CACHE" 2>/dev/null
+      ;;
     dyld_shared_cache_util)
       dyld_shared_cache_util -list "$CACHE"
       ;;
@@ -106,6 +129,9 @@ print_member_list() {
 extract_member() {
   local member="$1"
   case "$extractor" in
+    ipsw)
+      ipsw dyld extract --objc --stubs --force --no-color -o "$OUT/members" "$CACHE" "$member" >/dev/null 2>&1
+      ;;
     dyld_shared_cache_util)
       dyld_shared_cache_util -extract "$member" "$CACHE" "$OUT/members" >/dev/null 2>&1
       ;;
@@ -142,6 +168,8 @@ copy_selected_member() {
   file "$dst" > "$OUT/metadata/$safe.file.txt" 2>&1 || true
   shasum -a 256 "$dst" > "$OUT/metadata/$safe.sha256" 2>&1 || true
   strings -a "$dst" > "$OUT/metadata/$safe.strings.txt" 2>&1 || true
+  nm -m "$dst" > "$OUT/metadata/$safe.nm-m.txt" 2>&1 || true
+  otool -L "$dst" > "$OUT/metadata/$safe.otool-L.txt" 2>&1 || true
   echo "$member" >> "$OUT/metadata/selected.txt"
 }
 

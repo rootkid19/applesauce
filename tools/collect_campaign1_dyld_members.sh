@@ -14,9 +14,10 @@ example:
 Writes extracted members under the local campaign artifact tree. Do not commit
 the output directory to GitHub.
 
-If dyld_shared_cache_util is unavailable, this script can build and use the
-local /usr/lib/dsc_extractor.bundle wrapper. That fallback extracts the full
-cache first, then copies the selected members.
+Prefers ipsw (brew install blacktop/tap/ipsw) for --objc --stubs enrichment.
+If ipsw is unavailable, falls back to dyld_shared_cache_util / dsc_extractor /
+local /usr/lib/dsc_extractor.bundle wrapper. The bundle fallback extracts the
+full cache first, then copies the selected members.
 EOF
   exit 2
 }
@@ -52,8 +53,13 @@ MEMBERS=(
   "/System/Library/Frameworks/ServiceManagement.framework/Versions/A/ServiceManagement"
 )
 
+# Write requested member list before extraction starts.
+printf '%s\n' "${MEMBERS[@]}" > "$OUT/metadata/requested-members.txt"
+
 extractor=""
-if command -v dyld_shared_cache_util >/dev/null 2>&1; then
+if command -v ipsw >/dev/null 2>&1; then
+  extractor="ipsw"
+elif command -v dyld_shared_cache_util >/dev/null 2>&1; then
   extractor="dyld_shared_cache_util"
 elif command -v dsc_extractor >/dev/null 2>&1; then
   extractor="dsc_extractor"
@@ -68,7 +74,10 @@ if [[ -z "$extractor" ]]; then
   cat > "$OUT/metadata/extraction-blocked.txt" <<'EOF'
 No supported extractor found in PATH.
 
-Install or build one of:
+Preferred (install via Homebrew):
+  brew install blacktop/tap/ipsw
+
+Or install/build one of:
 - dyld_shared_cache_util
 - dsc_extractor
 - /usr/lib/dsc_extractor.bundle wrapper via tools/build_dsc_extractor_bundle_wrapper.sh
@@ -79,8 +88,22 @@ EOF
   exit 1
 fi
 
+# Write extractor identity metadata.
+{
+  echo "extractor=$extractor"
+  if [[ "$extractor" == "ipsw" ]]; then
+    ipsw version 2>/dev/null || echo "version=unknown"
+  else
+    echo "version=n/a"
+  fi
+  echo "cache=$CACHE"
+} > "$OUT/metadata/extractor.txt"
+
 print_member_list() {
   case "$extractor" in
+    ipsw)
+      ipsw dyld info --dylibs --no-color "$CACHE" 2>/dev/null
+      ;;
     dyld_shared_cache_util)
       dyld_shared_cache_util -list "$CACHE"
       ;;
@@ -96,6 +119,9 @@ print_member_list() {
 extract_member() {
   local member="$1"
   case "$extractor" in
+    ipsw)
+      ipsw dyld extract --objc --stubs --force --no-color -o "$OUT/members" "$CACHE" "$member" >/dev/null 2>&1
+      ;;
     dyld_shared_cache_util)
       dyld_shared_cache_util -extract "$member" "$CACHE" "$OUT/members" >/dev/null 2>&1
       ;;
@@ -149,6 +175,7 @@ else
     echo "[*] extracting $member"
     if extract_member "$member"; then
       echo "$member" >> "$OUT/metadata/extracted.txt"
+      copy_selected_member "$OUT/members" "$member" || true
     else
       echo "$member" >> "$OUT/metadata/missing-or-failed.txt"
     fi

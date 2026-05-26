@@ -8,6 +8,7 @@ Clone anywhere. By default output goes next to the repo:
 ```
 
 For static Mach-O reverse-engineering helpers, see `static-re.md`.
+For binary unit triage (emit → rank → packet), see `static-sequela.md`.
 
 ## Host State
 
@@ -310,6 +311,11 @@ If 26.4 is only mounted from another boot:
 ./tools/collect_packet002_dyld_members.sh 26.4 /path/to/26.4/dyld_shared_cache_arm64e
 ```
 
+The dyld script prefers `ipsw` when installed (`brew install blacktop/tap/ipsw`),
+extracting each member with `--objc --stubs` for richer symbol coverage. Fallback
+order: `dyld_shared_cache_util` → `dsc_extractor` → `dsc_extract_bundle` (full-cache
+expand). `metadata/extractor.txt` records which extractor ran and its version.
+
 Send only:
 
 ```text
@@ -332,6 +338,47 @@ After both labels are present:
 
 ```zsh
 ./tools/diff_packet002_binary_truth.sh 26.4 26.5
+```
+
+## Authority Maps
+
+`reverse_authority_map.sh` builds a deterministic authority surface map for any
+Mach-O binary or bundle: imports, symbols, filtered strings (audit-token, XPC,
+entitlements, TCC, sandbox extension, bookmark/security-scoped APIs), ObjC
+metadata, and Swift demangled symbols.
+
+Run on a single binary:
+
+```zsh
+./tools/reverse_authority_map.sh \
+  artifacts/packet002-accounts-privacy/26.5/standalone/System/Library/PrivateFrameworks/AuthKit.framework/Versions/A/Support/akd \
+  /tmp/akd-authority
+```
+
+Run on all Packet 002 binaries for a label (after artifact collection):
+
+```zsh
+./tools/collect_packet002_authority_maps.sh 26.4
+./tools/collect_packet002_authority_maps.sh 26.5
+```
+
+Output goes to:
+
+```text
+<workspace>/artifacts/packet002-accounts-privacy/<label>/analysis/authority-maps/<binary-safe-name>/
+```
+
+Key files per binary:
+
+```text
+identity.txt            - file type, sha256
+imports.txt             - otool -L
+symbols-nm.txt          - nm -m
+strings-authority.txt   - filtered for audit-token, XPC, sandbox, bookmark APIs
+objc-metadata.txt       - otool -ov ObjC section
+swift-demangled.txt     - demangled Swift symbols
+sandbox-profile-refs.txt
+launchd-refs.txt
 ```
 
 ## Packet 006 Sandbox Protected Data

@@ -12,9 +12,10 @@ examples:
   tools/collect_packet002_dyld_members.sh 26.5 /System/Volumes/Preboot/Cryptexes/OS/System/Library/dyld/dyld_shared_cache_arm64e
   tools/collect_packet002_dyld_members.sh 26.4 /path/to/26.4/dyld_shared_cache_arm64e
 
-Extracts Packet 002 Accounts/privacy-preferences dyld-cache members. The
-fallback extractor expands the full cache first; expect disk use. Set
-APPLESAUCE_KEEP_FULL_EXTRACT=1 to keep fallback full-extract output.
+Extracts Packet 002 Accounts/privacy-preferences dyld-cache members.
+Prefers ipsw (brew install blacktop/tap/ipsw) for --objc --stubs enrichment.
+The dsc_extract_bundle fallback expands the full cache first; expect disk use.
+Set APPLESAUCE_KEEP_FULL_EXTRACT=1 to keep fallback full-extract output.
 EOF
   exit 2
 }
@@ -70,8 +71,13 @@ MEMBERS=(
   "/System/Library/PrivateFrameworks/TCCSystemMigration.framework/Versions/A/TCCSystemMigration"
 )
 
+# Write requested member list before extraction starts.
+printf '%s\n' "${MEMBERS[@]}" > "$OUT/metadata/requested-members.txt"
+
 extractor=""
-if command -v dyld_shared_cache_util >/dev/null 2>&1; then
+if command -v ipsw >/dev/null 2>&1; then
+  extractor="ipsw"
+elif command -v dyld_shared_cache_util >/dev/null 2>&1; then
   extractor="dyld_shared_cache_util"
 elif command -v dsc_extractor >/dev/null 2>&1; then
   extractor="dsc_extractor"
@@ -86,7 +92,10 @@ if [[ -z "$extractor" ]]; then
   cat > "$OUT/metadata/extraction-blocked.txt" <<'EOF'
 No supported extractor found in PATH.
 
-Install or build one of:
+Preferred (install via Homebrew):
+  brew install blacktop/tap/ipsw
+
+Or install/build one of:
 - dyld_shared_cache_util
 - dsc_extractor
 - /usr/lib/dsc_extractor.bundle wrapper via tools/build_dsc_extractor_bundle_wrapper.sh
@@ -95,8 +104,22 @@ EOF
   exit 1
 fi
 
+# Write extractor identity metadata.
+{
+  echo "extractor=$extractor"
+  if [[ "$extractor" == "ipsw" ]]; then
+    ipsw version 2>/dev/null || echo "version=unknown"
+  else
+    echo "version=n/a"
+  fi
+  echo "cache=$CACHE"
+} > "$OUT/metadata/extractor.txt"
+
 print_member_list() {
   case "$extractor" in
+    ipsw)
+      ipsw dyld info --dylibs --no-color "$CACHE" 2>/dev/null
+      ;;
     dyld_shared_cache_util)
       dyld_shared_cache_util -list "$CACHE"
       ;;
@@ -112,6 +135,9 @@ print_member_list() {
 extract_member() {
   local member="$1"
   case "$extractor" in
+    ipsw)
+      ipsw dyld extract --objc --stubs --force --no-color -o "$OUT/members" "$CACHE" "$member" >/dev/null 2>&1
+      ;;
     dyld_shared_cache_util)
       dyld_shared_cache_util -extract "$member" "$CACHE" "$OUT/members" >/dev/null 2>&1
       ;;
