@@ -355,7 +355,8 @@ Run on a single binary:
   /tmp/akd-authority
 ```
 
-Run on all Packet 002 binaries for a label (after artifact collection):
+Run on all Packet 002 standalone and selected dyld binaries for a label (after
+artifact collection):
 
 ```zsh
 ./tools/collect_packet002_authority_maps.sh 26.4
@@ -365,7 +366,8 @@ Run on all Packet 002 binaries for a label (after artifact collection):
 Output goes to:
 
 ```text
-<workspace>/artifacts/packet002-accounts-privacy/<label>/analysis/authority-maps/<binary-safe-name>/
+<workspace>/artifacts/packet002-accounts-privacy/<label>/analysis/authority-maps/standalone/<binary-safe-name>/
+<workspace>/artifacts/packet002-accounts-privacy/<label>/analysis/authority-maps/dyld-selected/<binary-safe-name>/
 ```
 
 Key files per binary:
