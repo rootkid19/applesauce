@@ -74,6 +74,14 @@ first_packet_ref() {
   fi
 }
 
+no_active_marker() {
+  local file="$1"
+  if [[ -f "$file" ]] && "$GREP_BIN" -Eiq 'No active packet selected|No packet is selected as an active|no active vulnerability lane selected' "$file"; then
+    return 0
+  fi
+  return 1
+}
+
 lower() {
   print -r -- "$1" | tr '[:upper:]' '[:lower:]'
 }
@@ -100,9 +108,15 @@ record_info() {
   print -r -- "- INFO: $*" >> "$TMP_DIR/findings.md"
 }
 
-ACTIVE_PACKET="$(first_packet_ref "$ACTIVE_FILE")"
+if no_active_marker "$ACTIVE_FILE"; then
+  ACTIVE_PACKET="none"
+else
+  ACTIVE_PACKET="$(first_packet_ref "$ACTIVE_FILE")"
+fi
 LANDSCAPE_PACKET="$(
-  if [[ -f "$LANDSCAPE_FILE" ]]; then
+  if no_active_marker "$LANDSCAPE_FILE"; then
+    print -r -- "none"
+  elif [[ -f "$LANDSCAPE_FILE" ]]; then
     "$AWK_BIN" '
       /Primary target:/ { seen=1; next }
       seen && /Packet [0-9][0-9][0-9]/ {
@@ -115,9 +129,11 @@ LANDSCAPE_PACKET="$(
   fi
 )"
 FUTURE_ACTIVE="$(
-  if [[ -f "$FUTURE_FILE" ]]; then
+  if no_active_marker "$FUTURE_FILE"; then
+    print -r -- "none"
+  elif [[ -f "$FUTURE_FILE" ]]; then
     "$AWK_BIN" -F '|' '
-      /Active target/ && /Packet|002|003|004|005|006|001/ {
+      /Active target/ && /[0-9][0-9][0-9]/ {
         for (i = 1; i <= NF; i++) {
           if ($i ~ /[0-9][0-9][0-9]/) {
             gsub(/^[ \t]+|[ \t]+$/, "", $i)
@@ -160,7 +176,11 @@ fi
 
 while IFS=$'\t' read -r packet file class status_text; do
   [[ "$packet" == "packet" ]] && continue
-  if [[ "$packet" == "$ACTIVE_PACKET" ]]; then
+  if [[ "$ACTIVE_PACKET" == "none" ]]; then
+    if [[ "$class" == "active" ]]; then
+      record_warning "$packet is active while ACTIVE_TARGET says no active packet is selected: $file status is '$status_text'."
+    fi
+  elif [[ "$packet" == "$ACTIVE_PACKET" ]]; then
     if [[ "$class" != "active" ]]; then
       record_warning "$packet is selected active, but $file status is '$status_text'."
     fi
