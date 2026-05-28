@@ -12,9 +12,12 @@ usage:
 example:
   tools/diff_packet007_binary_truth.sh 26.4 26.5
 
-Compares Packet 007 Sync Services / Contacts-consent collection outputs and
-writes a deterministic byte-level matrix under
+Compares Packet 007 Sync Services / Contacts-consent collection outputs with
+whole-file cmp/SHA only and writes a deterministic byte-level artifact matrix under
 artifacts/packet007-syncservices-contacts/diff-<old>-vs-<new>.
+
+This is not semantic binary truth. It does not normalize Mach-O text, functions,
+rebases, signatures, or layout drift.
 EOF
   exit 2
 }
@@ -61,6 +64,8 @@ echo "[*] out: $OUT"
   echo "patched_root=$PATCH_ROOT"
   echo "baseline_dyld=$BASE_DYLD"
   echo "patched_dyld=$PATCH_DYLD"
+  echo "comparison=whole-file-cmp-sha256"
+  echo "semantic_binary_truth=no"
   "$DATE_BIN" -u +"date_utc=%Y-%m-%dT%H:%M:%SZ"
 } > "$OUT/metadata/diff-context.txt"
 
@@ -142,10 +147,16 @@ else
 fi
 
 {
-  echo "# Packet 007 Binary Truth Summary"
+  echo "# Packet 007 Byte-Level Artifact Diff"
   echo
   echo "Baseline: $BASE_LABEL"
   echo "Patched: $PATCH_LABEL"
+  echo
+  echo "Method: whole-file \`cmp -s\` plus SHA-256."
+  echo
+  echo "Important: \`changed\` means file bytes differ. It is not evidence of a"
+  echo "semantic code change, \`__TEXT\` delta, function delta, or vulnerability."
+  echo "Use Binary Ninja / BinDiff / normalized text comparison for semantic truth."
   echo
   for tsv in "$OUT"/trees/*.tsv; do
     [[ -f "$tsv" ]] || continue
