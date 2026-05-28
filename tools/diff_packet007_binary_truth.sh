@@ -104,6 +104,13 @@ compare_tree() {
     (cd "$right" && "$FIND_BIN" . -type f -print | "$SED_BIN" 's#^\./##' | "$SORT_BIN") > "$right_list"
   fi
 
+  if [[ "$category" == "dyld-selected" ]]; then
+    "$AWK_BIN" '$0 !~ /\.a2s$/' "$left_list" > "$left_list.filtered"
+    "$AWK_BIN" '$0 !~ /\.a2s$/' "$right_list" > "$right_list.filtered"
+    mv "$left_list.filtered" "$left_list"
+    mv "$right_list.filtered" "$right_list"
+  fi
+
   "$SORT_BIN" -u "$left_list" "$right_list" > "$all_list"
 
   {
