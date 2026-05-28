@@ -16,6 +16,9 @@ Extracts Packet 002 Accounts/privacy-preferences dyld-cache members.
 Prefers ipsw (brew install blacktop/tap/ipsw) for --objc --stubs enrichment.
 The dsc_extract_bundle fallback expands the full cache first; expect disk use.
 Set APPLESAUCE_KEEP_FULL_EXTRACT=1 to keep fallback full-extract output.
+Set APPLESAUCE_DYLD_LIGHT=1 to skip ipsw --objc/--stubs enrichment for faster
+acquisition validation. The selected Mach-Os and local metadata are still
+emitted.
 EOF
   exit 2
 }
@@ -31,6 +34,19 @@ TOOLS_DIR="$(cd "$(dirname "$0")" && pwd)"
 if [[ ! -f "$CACHE" ]]; then
   echo "cache not found: $CACHE" >&2
   exit 2
+fi
+
+if [[ -e "$OUT" && -n "$(find "$OUT" -mindepth 1 -print -quit 2>/dev/null || true)" ]]; then
+  if [[ "${APPLESAUCE_OVERWRITE:-0}" != "1" ]]; then
+    cat >&2 <<EOF
+output already exists and is non-empty: $OUT
+
+Use a fresh label, or rerun with:
+  APPLESAUCE_OVERWRITE=1 $0 $LABEL $CACHE
+EOF
+    exit 2
+  fi
+  rm -rf "$OUT"
 fi
 
 mkdir -p "$OUT"/{members,selected,metadata}
@@ -109,6 +125,11 @@ fi
   echo "extractor=$extractor"
   if [[ "$extractor" == "ipsw" ]]; then
     ipsw version 2>/dev/null || echo "version=unknown"
+    if [[ "${APPLESAUCE_DYLD_LIGHT:-0}" == "1" ]]; then
+      echo "ipsw_enrichment=light"
+    else
+      echo "ipsw_enrichment=objc-stubs"
+    fi
   else
     echo "version=n/a"
   fi
@@ -134,15 +155,23 @@ print_member_list() {
 
 extract_member() {
   local member="$1"
+  local rel="${member#/}"
+  local safe="${rel//\//__}"
+  local stdout="$OUT/metadata/$safe.extract.stdout.txt"
+  local stderr="$OUT/metadata/$safe.extract.stderr.txt"
   case "$extractor" in
     ipsw)
-      ipsw dyld extract --objc --stubs --force --no-color -o "$OUT/members" "$CACHE" "$member" >/dev/null 2>&1
+      if [[ "${APPLESAUCE_DYLD_LIGHT:-0}" == "1" ]]; then
+        ipsw dyld extract --force --no-color -o "$OUT/members" "$CACHE" "$member" >"$stdout" 2>"$stderr"
+      else
+        ipsw dyld extract --objc --stubs --force --no-color -o "$OUT/members" "$CACHE" "$member" >"$stdout" 2>"$stderr"
+      fi
       ;;
     dyld_shared_cache_util)
-      dyld_shared_cache_util -extract "$member" "$CACHE" "$OUT/members" >/dev/null 2>&1
+      dyld_shared_cache_util -extract "$member" "$CACHE" "$OUT/members" >"$stdout" 2>"$stderr"
       ;;
     dsc_extractor)
-      dsc_extractor --extract "$member" "$CACHE" "$OUT/members" >/dev/null 2>&1
+      dsc_extractor --extract "$member" "$CACHE" "$OUT/members" >"$stdout" 2>"$stderr"
       ;;
     dsc_extract_bundle)
       return 3
@@ -162,6 +191,10 @@ copy_selected_member() {
 
   if [[ ! -f "$src" ]]; then
     src="$(find "$base" -type f -path "*/$rel" -print -quit 2>/dev/null || true)"
+  fi
+
+  if [[ -z "$src" || ! -f "$src" ]]; then
+    src="$base/$(basename "$member")"
   fi
 
   if [[ -z "$src" || ! -f "$src" ]]; then

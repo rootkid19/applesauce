@@ -129,10 +129,14 @@ compare_tree standalone "$BASE_ROOT/standalone" "$PATCH_ROOT/standalone"
 compare_tree profiles "$BASE_ROOT/profiles" "$PATCH_ROOT/profiles"
 compare_tree feature-flags "$BASE_ROOT/feature-flags" "$PATCH_ROOT/feature-flags"
 
-if [[ -d "$BASE_DYLD" || -d "$PATCH_DYLD" ]]; then
+if [[ -d "$BASE_DYLD" && -d "$PATCH_DYLD" ]]; then
   compare_tree dyld-selected "$BASE_DYLD" "$PATCH_DYLD"
 else
-  echo "dyld selected directories missing for one or both labels" > "$OUT/metadata/dyld-selected-skipped.txt"
+  {
+    echo "dyld selected directories missing for one or both labels"
+    echo "baseline_dyld_present=$([[ -d "$BASE_DYLD" ]] && echo yes || echo no)"
+    echo "patched_dyld_present=$([[ -d "$PATCH_DYLD" ]] && echo yes || echo no)"
+  } > "$OUT/metadata/dyld-selected-skipped.txt"
 fi
 
 {

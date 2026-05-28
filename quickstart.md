@@ -9,6 +9,43 @@ Clone anywhere. By default output goes next to the repo:
 
 For static Mach-O reverse-engineering helpers, see `static-re.md`.
 For binary unit triage (emit → rank → packet), see `static-sequela.md`.
+For changed-surface ranking before function-level diffing, see
+`static-re.md#rank-changed-surfaces`.
+
+## Process Hygiene
+
+Before starting or after parking a packet lane, check that durable state agrees:
+
+```zsh
+cd /path/to/applesauce
+./tools/reverse_packet_sync_check.sh --no-fail
+```
+
+The default report is:
+
+```text
+<workspace>/artifacts/process/packet-sync-check.md
+```
+
+Record important runs in the lightweight ledger:
+
+```zsh
+./tools/reverse_run_ledger.sh append \
+  --packet 002 \
+  --lane "artifact readiness" \
+  --build-pair "26.4->26.5" \
+  --command "./tools/diff_packet002_binary_truth.sh 26.4 26.5" \
+  --out-path "artifacts/packet002-accounts-privacy/diff-26.4-vs-26.5" \
+  --result "standalone/config diff complete; 26.4 dyld pending" \
+  --classification "active investigation"
+```
+
+Ledger outputs:
+
+```text
+<workspace>/artifacts/run-ledger/run-ledger.tsv
+<workspace>/artifacts/run-ledger/run-ledger.jsonl
+```
 
 ## Host State
 
@@ -315,6 +352,16 @@ The dyld script prefers `ipsw` when installed (`brew install blacktop/tap/ipsw`)
 extracting each member with `--objc --stubs` for richer symbol coverage. Fallback
 order: `dyld_shared_cache_util` → `dsc_extractor` → `dsc_extract_bundle` (full-cache
 expand). `metadata/extractor.txt` records which extractor ran and its version.
+For fast acquisition validation, use:
+
+```zsh
+APPLESAUCE_DYLD_LIGHT=1 ./tools/collect_packet002_dyld_members.sh 26.4 /path/to/26.4/dyld_shared_cache_arm64e
+```
+
+Light mode skips `ipsw --objc --stubs` enrichment but still emits selected
+Mach-Os and local metadata for byte/function diffing. Reuse a label only with
+`APPLESAUCE_OVERWRITE=1`; otherwise the collector stops instead of merging
+stale metadata into a prior run.
 
 Send only:
 

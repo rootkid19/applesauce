@@ -76,3 +76,30 @@ _fpfs_fast_realpath
 
 It emits `normalized/wrapper-funnel-map.csv` and `summary.md` with build, binary,
 address/offset, likely callsite, confidence, and notes.
+
+## Rank Changed Surfaces
+
+Use `reverse_surface_rank.py` when a packet has a byte/config diff but no
+function-level root cause yet:
+
+```zsh
+./tools/reverse_surface_rank.py \
+  ../artifacts/packet002-accounts-privacy/diff-26.4-vs-26.5 \
+  -o ../artifacts/packet002-accounts-privacy/surface-rank.md \
+  --json-out ../artifacts/packet002-accounts-privacy/surface-rank.json
+```
+
+For a packet-specific lane, restrict ranking to path-focused surfaces:
+
+```zsh
+./tools/reverse_surface_rank.py \
+  ../artifacts/packet002-accounts-privacy/diff-26.4-vs-26.5 \
+  -o ../artifacts/packet002-accounts-privacy/surface-rank-focused.md \
+  --json-out ../artifacts/packet002-accounts-privacy/surface-rank-focused.json \
+  --focus-regex 'Accounts?|AppleAccount|accountsd|accounts\.dom|akd|AuthKit|tccd|tccutil|TCC\.framework|TCC\.plist|PermissionKit|xpcroleaccountd|appleaccounttransparencyd' \
+  --require-focus
+```
+
+The ranker scores changed/added surfaces using path hints and optional strings
+from paired files. It is deterministic triage only; it does not claim root
+cause, reachability, or vulnerability impact.
