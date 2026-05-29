@@ -137,7 +137,9 @@ FUTURE_ACTIVE="$(
         for (i = 1; i <= NF; i++) {
           if ($i ~ /[0-9][0-9][0-9]/) {
             gsub(/^[ \t]+|[ \t]+$/, "", $i)
-            print "Packet " substr($i, 1, 3)
+            if (match($i, /[0-9][0-9][0-9]/)) {
+              print "Packet " substr($i, RSTART, RLENGTH)
+            }
             exit
           }
         }
