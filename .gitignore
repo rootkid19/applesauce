@@ -1,5 +1,15 @@
 .DS_Store
 
+# Public docs policy: keep the repo to tools plus one terse index.
+*.md
+!README.md
+
+# Local agent/operator scratch.
+.claude/
+.kimi/
+__pycache__/
+*.pyc
+
 # Keep Apple proprietary binaries, dyld caches, extracted Mach-Os, and raw run
 # bundles local. Commit scripts, notes, summaries, hashes, and manifests only.
 artifacts/
@@ -28,10 +38,21 @@ dyld/
 *.local
 tools/dsc_extract_bundle
 
+# Private/local analysis experiments. Commit intentionally with `git add -f`
+# only if they are promoted to reusable public tooling.
 static-sequela.md
+tools/CLAUDE.md
+tools/__pycache__/
+tools/analyze_bindiff_results.sh
+tools/binja_dialog_handler.sh
+tools/binja_export_batch.py
+tools/run_bindiff_batch.sh
+tools/collect_packet006_mcm_state_recon.sh
+tools/run_packet006_mcm_query_gate.sh
 tools/reverse_emit_units.py
 tools/reverse_packet_unit.py
 tools/reverse_rank_units.py
+harnesses/packet006-mcm-query/
 
 # Generated harness output.
 harnesses/ls-stale-state/build/
