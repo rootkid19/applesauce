@@ -76,6 +76,7 @@ ROOTS=(
   "/System/Library/Frameworks"
   "/System/Library/PrivateFrameworks"
   "/System/Library/ExtensionKit/Extensions"
+  "/System/Applications"
   "/usr/bin"
   "/usr/sbin"
   "/usr/lib"
