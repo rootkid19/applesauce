@@ -41,9 +41,44 @@ DEFAULT_ROOTS = [
     "/usr/libexec",
 ]
 
+# Use non-alphanumeric boundaries for C/syscall terms. Plain substring matching
+# turns common strings like "GlobalState" and "callState" into false "lstat"
+# hits, which pollutes system-wide sweeps badly.
+TERM_BOUNDARY = r"(?<![A-Za-z0-9]){term}(?![A-Za-z0-9])"
+
+
+def term_pattern(term: str) -> str:
+    return TERM_BOUNDARY.format(term=re.escape(term))
+
+
 SIGNAL_RE = re.compile(
-    r"symlink|symbolic.?link|readlink|realpath|lstat|fstatat|openat|"
-    r"O_NOFOLLOW|nofollow|ELOOP|getattrlist|faccessat|renameat|unlinkat|"
+    r"symlink|symbolic.?link|"
+    + "|".join(
+        term_pattern(term)
+        for term in (
+            "readlink",
+            "realpath",
+            "lstat",
+            "fstatat",
+            "openat",
+            "O_NOFOLLOW_ANY",
+            "O_NOFOLLOW",
+            "ELOOP",
+            "getattrlist",
+            "faccessat",
+            "renameat",
+            "renameatx_np",
+            "unlinkat",
+            "AT_SYMLINK_NOFOLLOW",
+            "F_GETPATH",
+            "fcntl",
+            "clonefile",
+            "renamex_np",
+            "RENAME_SWAP",
+            "RENAME_EXCL",
+        )
+    )
+    + r"|nofollow|canonical|canonicaliz|stringByStandardizingPath|"
     r"URLByResolvingSymlinksInPath|resolvingSymlinks|standardizedURL|"
     r"destinationOfSymbolicLink|NSURLIsSymbolicLinkKey|isSymbolicLink",
     re.IGNORECASE,
@@ -51,7 +86,7 @@ SIGNAL_RE = re.compile(
 
 PATH_AUTHORITY_RE = re.compile(
     r"Contacts|AddressBook|SyncServices|CardDAV|DataAccess|TCC|Privacy|"
-    r"consent|permission|container|sandbox|bookmark|extension",
+    r"consent|permission|container|sandbox|bookmark",
     re.IGNORECASE,
 )
 
@@ -97,6 +132,14 @@ def join_terms(values: Iterable[str], limit: int = 40) -> str:
         if len(seen) >= limit:
             break
     return "|".join(seen) if seen else "-"
+
+
+def normalize_import_hit(line: str) -> str:
+    """Reduce otool -Iv rows to symbol names so address churn is not a signal."""
+    parts = line.split()
+    if not parts:
+        return line
+    return parts[-1]
 
 
 def is_macho(path: Path) -> bool:
@@ -289,7 +332,7 @@ def collect_one(root: Path, rel: str, tmpdir: Path, copy_dir: Path | None) -> di
                 row["text_sha256"] = sha256_bytes(f.read(size))
         imports = import_lines(thin)
         strings = string_lines(thin)
-        import_hits = [line for line in imports if SIGNAL_RE.search(line)]
+        import_hits = [normalize_import_hit(line) for line in imports if SIGNAL_RE.search(line)]
         string_hits = [line for line in strings if SIGNAL_RE.search(line)]
         row["imports_count"] = str(len(imports))
         row["strings_count"] = str(len(strings))
