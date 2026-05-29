@@ -2,7 +2,7 @@
 set -euo pipefail
 unsetopt verbose xtrace
 
-# reverse_packet_text_matrix.sh
+# reverse_packet_text_matrix.sh (v2)
 #
 # Given two collected artifact roots, emit a deterministic TSV/Markdown matrix
 # of executable Mach-O files with:
@@ -11,21 +11,30 @@ unsetopt verbose xtrace
 #   - __TEXT,__text offset, size, and SHA-256 of exact text bytes
 #   - import count, string count
 #   - symlink/path-hardening signal counts (strings + imports)
+#   - dyld-selected category support (standalone + selected/)
 #
-# This is designed for Apple patch-diff research: it separates rebase/signature
-# drift from actual __text changes by hashing the exact code-section bytes.
+# Designed for Apple patch-diff research: separates rebase/signature drift from
+# actual __text changes by hashing exact code-section bytes.
 #
 # usage:
-#   reverse_packet_text_matrix.sh <baseline-root> <patched-root> [outdir]
+#   reverse_packet_text_matrix.sh [options] <baseline-root> <patched-root> [outdir]
+#   reverse_packet_text_matrix.sh --regression-test <root>
 #
-# example:
-#   reverse_packet_text_matrix.sh \
-#     artifacts/packet007-syncservices-contacts/26.4 \
-#     artifacts/packet007-syncservices-contacts/26.5
+# options:
+#   --changed-only      Output only rows with whole-file or __text changes
+#   --signals-only      Output only rows with symlink-signal hits
+#   --format tsv|jsonl  Output format (default: tsv)
+#
+# examples:
+#   reverse_packet_text_matrix.sh artifacts/.../26.4 artifacts/.../26.5
+#   reverse_packet_text_matrix.sh --changed-only --signals-only \
+#     artifacts/.../26.4 artifacts/.../26.5
+#   reverse_packet_text_matrix.sh --regression-test artifacts/.../26.5
 #
 # Output:
-#   matrix.tsv       - machine-readable tab-separated values
-#   summary.md       - human-readable Markdown summary with change statistics
+#   matrix.tsv       - primary matrix (filtered if options used)
+#   full-matrix.tsv  - always the complete unfiltered matrix
+#   summary.md       - human-readable Markdown summary
 #
 # Deterministic requirements:
 #   - lipo, otool, file, strings, cmp, shasum, python3, awk
@@ -36,28 +45,74 @@ source "$(cd "$(dirname "${(%):-%x}")" && pwd)/common_reverse.sh"
 usage() {
   cat >&2 <<'EOF'
 usage:
-  reverse_packet_text_matrix.sh <baseline-root> <patched-root> [outdir]
+  reverse_packet_text_matrix.sh [options] <baseline-root> <patched-root> [outdir]
+  reverse_packet_text_matrix.sh --regression-test <root>
+
+options:
+  --changed-only      Output only rows with whole-file or __text changes
+  --signals-only      Output only rows with symlink-signal hits
+  --format tsv|jsonl  Output format (default: tsv)
 
 examples:
   reverse_packet_text_matrix.sh artifacts/packet007-syncservices-contacts/26.4 \
                                  artifacts/packet007-syncservices-contacts/26.5
 
-  reverse_packet_text_matrix.sh artifacts/packet007-syncservices-contacts/26.4-expanded \
-                                 artifacts/packet007-syncservices-contacts/26.5-expanded \
-                                 artifacts/packet007-syncservices-contacts/text-matrix-expanded
+  reverse_packet_text_matrix.sh --changed-only --format jsonl \
+                                 artifacts/packet007-syncservices-contacts/26.4 \
+                                 artifacts/packet007-syncservices-contacts/26.5
+
+  reverse_packet_text_matrix.sh --regression-test artifacts/packet007-syncservices-contacts/26.5
 EOF
   exit 2
 }
 
-[[ $# -ge 2 && $# -le 3 ]] || usage
+# ---------------------------------------------------------------------------
+# Option parsing
+# ---------------------------------------------------------------------------
 
-BASE_ROOT="${1:A}"
-PATCH_ROOT="${2:A}"
+CHANGED_ONLY_ARR=()
+SIGNALS_ONLY_ARR=()
+FORMAT_ARR=()
+REGRESSION_TEST_ARR=()
 
-if [[ $# -eq 3 ]]; then
-  OUT="${3:A}"
+zparseopts -D -E -- \
+  -changed-only=CHANGED_ONLY_ARR \
+  -signals-only=SIGNALS_ONLY_ARR \
+  -format:=FORMAT_ARR \
+  -regression-test=REGRESSION_TEST_ARR
+
+CHANGED_ONLY="${#CHANGED_ONLY_ARR}"
+SIGNALS_ONLY="${#SIGNALS_ONLY_ARR}"
+REGRESSION_TEST="${#REGRESSION_TEST_ARR}"
+FORMAT="tsv"
+if [[ "${#FORMAT_ARR}" -gt 0 ]]; then
+  FORMAT="${FORMAT_ARR[2]}"
+fi
+
+if [[ "$FORMAT" != "tsv" && "$FORMAT" != "jsonl" ]]; then
+  echo "Invalid format: $FORMAT (expected tsv or jsonl)" >&2
+  usage
+fi
+
+# ---------------------------------------------------------------------------
+# Path resolution
+# ---------------------------------------------------------------------------
+
+if [[ "$REGRESSION_TEST" -eq 1 ]]; then
+  [[ $# -eq 1 ]] || usage
+  BASE_ROOT="${1:A}"
+  PATCH_ROOT="${1:A}"
+  OUT="$(mktemp -d)"
+  REGRESSION_LABEL="${1:t}"
 else
-  OUT="$(artifact_root)/packet007-syncservices-contacts/text-matrix-$(basename "$BASE_ROOT")-vs-$(basename "$PATCH_ROOT")"
+  [[ $# -ge 2 && $# -le 3 ]] || usage
+  BASE_ROOT="${1:A}"
+  PATCH_ROOT="${2:A}"
+  if [[ $# -eq 3 ]]; then
+    OUT="${3:A}"
+  else
+    OUT="$(artifact_root)/packet007-syncservices-contacts/text-matrix-$(basename "$BASE_ROOT")-vs-$(basename "$PATCH_ROOT")"
+  fi
 fi
 
 [[ -d "$BASE_ROOT" ]] || reverse_die "baseline root not found: $BASE_ROOT"
@@ -68,7 +123,6 @@ mkdir -p "$OUT"
 TMPDIR="$(mktemp -d)"
 trap "rm -rf '$TMPDIR'" EXIT
 
-# Symlink/path hardening vocabulary (case-insensitive grep)
 SYMLINK_PATTERN='symlink|readlink|realpath|lstat|fstatat|openat|getattrlist|faccessat|O_NOFOLLOW|URLByResolvingSymlinksInPath|standardizedURL|destinationOfSymbolicLink|isSymbolicLink|ResolvingSymlinksInPath'
 
 # ---------------------------------------------------------------------------
@@ -79,10 +133,6 @@ is_macho() {
   file "$1" 2>/dev/null | grep -q "Mach-O"
 }
 
-# Return a thin copy of the binary using the best available arch.
-# If already thin and matches desired, copy directly.
-# If universal, lipo -thin to temp.
-# Fallback to first available arch.
 get_thin_for_arch() {
   local bin="$1"
   local want="$2"
@@ -109,7 +159,6 @@ get_thin_for_arch() {
     lipo -thin "$want" -output "$out" "$bin" 2>/dev/null && return 0
   fi
 
-  # Fallback: first available arch
   local first="$(echo "$archs" | awk '{print $1}')"
   if [[ -n "$first" ]]; then
     if [[ "$archs" == "$first" ]]; then
@@ -122,8 +171,6 @@ get_thin_for_arch() {
   return 1
 }
 
-# Extract __TEXT,__text offset and size from otool -l output.
-# Prints: "<offset> <size_hex>"
 get_text_section() {
   local thin="$1"
   otool -l "$thin" 2>/dev/null | awk '
@@ -139,7 +186,6 @@ get_text_section() {
   '
 }
 
-# Hash exactly `count` bytes starting at `offset` in `bin` using python3.
 hash_bytes() {
   local bin="$1"
   local offset="$2"
@@ -153,19 +199,16 @@ with open(sys.argv[1], "rb") as f:
 ' "$bin" "$offset" "$count" 2>/dev/null | shasum -a 256 2>/dev/null | awk '{print $1}'
 }
 
-# Count imports from otool -Iv (exclude header lines)
 count_imports() {
   local thin="$1"
   otool -Iv "$thin" 2>/dev/null | awk 'NR>3 && $1 ~ /^0x[0-9a-fA-F]+$/ {c++} END {print c+0}'
 }
 
-# Count strings
 count_strings() {
   local thin="$1"
   strings "$thin" 2>/dev/null | wc -l | tr -d ' '
 }
 
-# Count symlink signals in strings + imports
 symlink_signals() {
   local thin="$1"
   local str_count import_count
@@ -175,7 +218,7 @@ symlink_signals() {
 }
 
 # ---------------------------------------------------------------------------
-# Discovery: find all Mach-O files under standalone/ in both roots
+# Discovery: find Mach-O files under standalone/ and selected/ in both roots
 # ---------------------------------------------------------------------------
 
 BASE_MACHOS="$TMPDIR/base.machos.txt"
@@ -185,39 +228,52 @@ ALL_MACHOS="$TMPDIR/all.machos.txt"
 : > "$BASE_MACHOS"
 : > "$PATCH_MACHOS"
 
-find_machos() {
+discover_machos() {
   local root="$1"
   local out="$2"
-  if [[ -d "$root/standalone" ]]; then
-    (cd "$root/standalone" && find . -type f -print) | while read -r rel; do
-      rel="${rel#./}"
-      [[ -n "$rel" ]] || continue
-      if is_macho "$root/standalone/$rel"; then
-        print -r -- "$rel"
+  local found_structured=0
+  {
+    for subdir in standalone selected; do
+      if [[ -d "$root/$subdir" ]]; then
+        found_structured=1
+        (cd "$root/$subdir" && find . -type f -print) | while IFS= read -r rel; do
+          rel="${rel#./}"
+          [[ -n "$rel" ]] || continue
+          # Skip dyld .a2s sidecar files
+          if [[ "$rel" == *.a2s ]]; then
+            continue
+          fi
+          if is_macho "$root/$subdir/$rel"; then
+            printf "%s\t%s\n" "$subdir" "$rel"
+          fi
+        done
       fi
-    done > "$out"
-  else
-    # If no standalone/ subdir, search from root directly
-    (cd "$root" && find . -type f -print) | while read -r rel; do
-      rel="${rel#./}"
-      [[ -n "$rel" ]] || continue
-      if is_macho "$root/$rel"; then
-        print -r -- "$rel"
-      fi
-    done > "$out"
-  fi
+    done
+    if [[ "$found_structured" -eq 0 ]]; then
+      (cd "$root" && find . -type f -print) | while IFS= read -r rel; do
+        rel="${rel#./}"
+        [[ -n "$rel" ]] || continue
+        if [[ "$rel" == *.a2s ]]; then
+          continue
+        fi
+        if is_macho "$root/$rel"; then
+          printf "%s\t%s\n" "unknown-root" "$rel"
+        fi
+      done
+    fi
+  } > "$out"
 }
 
-find_machos "$BASE_ROOT" "$BASE_MACHOS"
-find_machos "$PATCH_ROOT" "$PATCH_MACHOS"
+discover_machos "$BASE_ROOT" "$BASE_MACHOS"
+discover_machos "$PATCH_ROOT" "$PATCH_MACHOS"
 
-sort -u "$BASE_MACHOS" "$PATCH_MACHOS" > "$ALL_MACHOS"
+sort -t$'\t' -k1,2 -u "$BASE_MACHOS" "$PATCH_MACHOS" > "$ALL_MACHOS"
 
 # ---------------------------------------------------------------------------
 # Header
 # ---------------------------------------------------------------------------
 
-TSV="$OUT/matrix.tsv"
+FULL_TSV="$OUT/full-matrix.tsv"
 {
   printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n" \
     "rel_path" "category" "baseline_present" "patched_present" "whole_file_same" \
@@ -225,7 +281,7 @@ TSV="$OUT/matrix.tsv"
     "baseline_text_sha256" "patched_text_sha256" "text_same" \
     "baseline_imports" "patched_imports" "baseline_strings" "patched_strings" \
     "symlink_signals_baseline" "symlink_signals_patched"
-} > "$TSV"
+} > "$FULL_TSV"
 
 # ---------------------------------------------------------------------------
 # Process each Mach-O
@@ -237,14 +293,17 @@ changed_whole=0
 only_base=0
 only_patch=0
 
-while IFS= read -r rel; do
+while IFS=$'\t' read -r category rel; do
   [[ -n "$rel" ]] || continue
   total=$(( total + 1 ))
 
-  base_path="$BASE_ROOT/standalone/$rel"
-  patch_path="$PATCH_ROOT/standalone/$rel"
-  [[ -f "$base_path" ]] || base_path="$BASE_ROOT/$rel"
-  [[ -f "$patch_path" ]] || patch_path="$PATCH_ROOT/$rel"
+  if [[ "$category" == "unknown-root" ]]; then
+    base_path="$BASE_ROOT/$rel"
+    patch_path="$PATCH_ROOT/$rel"
+  else
+    base_path="$BASE_ROOT/$category/$rel"
+    patch_path="$PATCH_ROOT/$category/$rel"
+  fi
 
   base_present="no"
   patch_present="no"
@@ -264,7 +323,6 @@ while IFS= read -r rel; do
   [[ "$base_present" == "yes" && "$patch_present" == "no" ]] && only_base=$(( only_base + 1 ))
   [[ "$base_present" == "no" && "$patch_present" == "yes" ]] && only_patch=$(( only_patch + 1 ))
 
-  # Determine best arch: prefer arm64e, then arm64, then first available.
   arch=""
   if [[ "$base_present" == "yes" ]]; then
     arch="$(reverse_select_arch "$base_path")"
@@ -273,9 +331,6 @@ while IFS= read -r rel; do
   fi
   [[ -n "$arch" ]] || arch="-"
 
-  # Thin copies
-  thin_base=""
-  thin_patch=""
   text_offset="-"
   text_size_hex="-"
   text_size_dec="-"
@@ -290,7 +345,7 @@ while IFS= read -r rel; do
   patch_syml="-"
 
   if [[ "$base_present" == "yes" && "$arch" != "-" ]]; then
-    thin_base="$TMPDIR/base-$(print -r -- "$rel" | tr '/ ' '__').thin"
+    thin_base="$TMPDIR/base-$(printf '%s' "$rel" | tr '/ ' '__').thin"
     if get_thin_for_arch "$base_path" "$arch" "$thin_base"; then
       text_info="$(get_text_section "$thin_base")"
       if [[ -n "$text_info" ]]; then
@@ -308,13 +363,12 @@ while IFS= read -r rel; do
   fi
 
   if [[ "$patch_present" == "yes" && "$arch" != "-" ]]; then
-    thin_patch="$TMPDIR/patch-$(print -r -- "$rel" | tr '/ ' '__').thin"
+    thin_patch="$TMPDIR/patch-$(printf '%s' "$rel" | tr '/ ' '__').thin"
     if get_thin_for_arch "$patch_path" "$arch" "$thin_patch"; then
       text_info="$(get_text_section "$thin_patch")"
       if [[ -n "$text_info" ]]; then
         off="$(echo "$text_info" | awk '{print $1}')"
         sz="$(echo "$text_info" | awk '{print $2}')"
-        # Only set if not already set from baseline (they should match)
         if [[ "$text_offset" == "-" ]]; then
           text_offset="$off"
           text_size_hex="$sz"
@@ -338,13 +392,61 @@ while IFS= read -r rel; do
   fi
 
   printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n" \
-    "$rel" "standalone" "$base_present" "$patch_present" "$whole_same" \
+    "$rel" "$category" "$base_present" "$patch_present" "$whole_same" \
     "$arch" "$text_offset" "$text_size_hex" "$text_size_dec" \
     "$base_text_sha" "$patch_text_sha" "$text_same" \
     "$base_imports" "$patch_imports" "$base_strings" "$patch_strings" \
-    "$base_syml" "$patch_syml" >> "$TSV"
+    "$base_syml" "$patch_syml" >> "$FULL_TSV"
 
 done < "$ALL_MACHOS"
+
+# ---------------------------------------------------------------------------
+# Filtering
+# ---------------------------------------------------------------------------
+
+TSV="$OUT/matrix.tsv"
+if [[ "$CHANGED_ONLY" -eq 0 && "$SIGNALS_ONLY" -eq 0 ]]; then
+  cp "$FULL_TSV" "$TSV"
+else
+  {
+    head -1 "$FULL_TSV"
+    awk -F'\t' -v changed="$CHANGED_ONLY" -v signals="$SIGNALS_ONLY" \
+      'NR>1 {
+        pass=1
+        if (changed==1) {
+          if ($5 != "no" && $12 != "no" && $3=="yes" && $4=="yes") pass=0
+        }
+        if (signals==1) {
+          if (($17+0)==0 && ($18+0)==0) pass=0
+        }
+        if (pass) print
+      }' "$FULL_TSV"
+  } > "$TSV"
+fi
+
+# ---------------------------------------------------------------------------
+# JSONL conversion if requested
+# ---------------------------------------------------------------------------
+
+if [[ "$FORMAT" == "jsonl" ]]; then
+  python3 -c '
+import csv, json, sys
+reader = csv.DictReader(sys.stdin, delimiter="\t")
+for row in reader:
+    # Coerce numeric fields
+    for k in ["text_size_dec", "baseline_imports", "patched_imports",
+              "baseline_strings", "patched_strings",
+              "symlink_signals_baseline", "symlink_signals_patched"]:
+        v = row.get(k, "-")
+        if v != "-":
+            try:
+                row[k] = int(v)
+            except ValueError:
+                pass
+    json.dump(row, sys.stdout)
+    sys.stdout.write("\n")
+' < "$TSV" > "$OUT/matrix.jsonl"
+fi
 
 # ---------------------------------------------------------------------------
 # Markdown summary
@@ -354,49 +456,105 @@ SUMMARY="$OUT/summary.md"
 {
   print -r -- "# Packet Text Matrix"
   print -r -- ""
-  print -r -- "- baseline: \`$BASE_ROOT\`"
-  print -r -- "- patched: \`$PATCH_ROOT\`"
+  if [[ "$REGRESSION_TEST" -eq 1 ]]; then
+    print -r -- "- mode: \`regression-test\`"
+    print -r -- "- target: \`$REGRESSION_LABEL\`"
+  else
+    print -r -- "- baseline: \`$BASE_ROOT\`"
+    print -r -- "- patched: \`$PATCH_ROOT\`"
+  fi
   print -r -- "- generated: $(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+  print -r -- "- format: \`$FORMAT\`"
+  if [[ "$CHANGED_ONLY" -eq 1 || "$SIGNALS_ONLY" -eq 1 ]]; then
+    print -r -- "- filters:"
+    [[ "$CHANGED_ONLY" -eq 1 ]] && print -r -- "  - \`--changed-only\`"
+    [[ "$SIGNALS_ONLY" -eq 1 ]] && print -r -- "  - \`--signals-only\`"
+  fi
   print -r -- ""
+  # Compute stats from the primary output TSV so filtered reports have consistent counts
+  stat_line="$(awk -F'\t' 'NR>1 {
+    total++
+    if ($5=="no") cw++
+    if ($12=="no") ct++
+    if ($3=="no") ob++
+    if ($4=="no") op++
+  } END {
+    printf "%d %d %d %d %d\n", total, cw+0, ct+0, ob+0, op+0
+  }' "$TSV")"
+  st_total="$(echo "$stat_line" | awk '{print $1}')"
+  st_cw="$(echo "$stat_line" | awk '{print $2}')"
+  st_ct="$(echo "$stat_line" | awk '{print $3}')"
+  st_ob="$(echo "$stat_line" | awk '{print $4}')"
+  st_op="$(echo "$stat_line" | awk '{print $5}')"
+
   print -r -- "## Statistics"
   print -r -- ""
   print -r -- "| metric | count |"
   print -r -- "| --- | --- |"
-  print -r -- "| total Mach-O paths | $total |"
-  print -r -- "| whole-file changed | $changed_whole |"
-  print -r -- "| __text changed | $changed_text |"
-  print -r -- "| only in baseline | $only_base |"
-  print -r -- "| only in patched | $only_patch |"
+  print -r -- "| total Mach-O paths | $st_total |"
+  print -r -- "| whole-file changed | $st_cw |"
+  print -r -- "| __text changed | $st_ct |"
+  print -r -- "| only in baseline | $st_ob |"
+  print -r -- "| only in patched | $st_op |"
   print -r -- ""
   print -r -- "## Changed __text (rebase-aware)"
   print -r -- ""
   print -r -- "These binaries have different __TEXT,__text byte hashes after thinning to the same arch."
   print -r -- ""
-  print -r -- "| rel_path | arch | text_size | baseline_imports | patched_imports | symlink_signals_baseline | symlink_signals_patched |"
-  print -r -- "| --- | --- | --- | --- | --- | --- | --- |"
+  print -r -- "| rel_path | category | arch | text_size | baseline_imports | patched_imports | symlink_signals_baseline | symlink_signals_patched |"
+  print -r -- "| --- | --- | --- | --- | --- | --- | --- | --- |"
   awk -F'\t' 'NR>1 && $12=="no" {
-    printf "| %s | %s | %s | %s | %s | %s | %s |\n", $1, $6, $8, $13, $14, $17, $18
+    printf "| %s | %s | %s | %s | %s | %s | %s | %s |\n", $1, $2, $6, $8, $13, $14, $17, $18
   }' "$TSV"
   print -r -- ""
   print -r -- "## Unchanged __text but whole-file changed"
   print -r -- ""
   print -r -- "These binaries differ at the whole-file level (signature, rebase, metadata) but have identical __TEXT,__text code bytes."
   print -r -- ""
-  print -r -- "| rel_path | arch | text_size |"
-  print -r -- "| --- | --- | --- |"
+  print -r -- "| rel_path | category | arch | text_size |"
+  print -r -- "| --- | --- | --- | --- |"
   awk -F'\t' 'NR>1 && $5=="no" && $12=="yes" {
-    printf "| %s | %s | %s |\n", $1, $6, $8
+    printf "| %s | %s | %s | %s |\n", $1, $2, $6, $8
   }' "$TSV"
   print -r -- ""
   print -r -- "## Only in one side"
   print -r -- ""
   awk -F'\t' 'NR>1 && ($3=="no" || $4=="no") {
-    printf "- %s (baseline=%s patched=%s)\n", $1, $3, $4
+    printf "- %s (category=%s baseline=%s patched=%s)\n", $1, $2, $3, $4
+  }' "$TSV"
+  print -r -- ""
+  print -r -- "## Symlink-signal carriers"
+  print -r -- ""
+  awk -F'\t' 'NR>1 && ($17>0 || $18>0) {
+    printf "- %s (category=%s baseline_signals=%s patched_signals=%s)\n", $1, $2, $17, $18
   }' "$TSV"
   print -r -- ""
   print -r -- "---"
   print -r -- ""
-  print -r -- "Full TSV: \`matrix.tsv\`"
+  print -r -- "Full TSV: \`full-matrix.tsv\`"
+  print -r -- ""
+  if [[ "$FORMAT" == "jsonl" ]]; then
+    print -r -- "Primary output: \`matrix.jsonl\`"
+  else
+    print -r -- "Primary output: \`matrix.tsv\`"
+  fi
 } > "$SUMMARY"
+
+# ---------------------------------------------------------------------------
+# Regression test assertion
+# ---------------------------------------------------------------------------
+
+if [[ "$REGRESSION_TEST" -eq 1 ]]; then
+  if [[ "$changed_text" -eq 0 && "$changed_whole" -eq 0 && "$only_base" -eq 0 && "$only_patch" -eq 0 ]]; then
+    print -r -- "PASS: regression test on $REGRESSION_LABEL"
+    print -r -- "$OUT"
+    exit 0
+  else
+    print -r -- "FAIL: regression test on $REGRESSION_LABEL"
+    print -r -- "  changed_text=$changed_text changed_whole=$changed_whole only_base=$only_base only_patch=$only_patch"
+    print -r -- "$OUT"
+    exit 1
+  fi
+fi
 
 print -r -- "$OUT"
