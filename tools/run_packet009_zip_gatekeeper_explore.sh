@@ -23,6 +23,7 @@ Options:
   --wait seconds                sleep after each Archive Utility open
   --wait-seconds <n>            seconds for --wait seconds (default: 20)
   --skip-recursive-off          skip the recursive-disabled control
+  --skip-follow-inner           skip second-hop opens of extracted inner ZIPs
   --prepare-only                build inputs and metadata without opening ZIPs
   --no-restore-preferences      leave Archive Utility recursive preference as set
   -h, --help                    show this help
@@ -40,6 +41,7 @@ EOF
 WAIT_MODE="prompt"
 WAIT_SECONDS=20
 SKIP_RECURSIVE_OFF=0
+SKIP_FOLLOW_INNER=0
 RESTORE_PREFERENCES=1
 OUT_OVERRIDE=""
 PREPARE_ONLY=0
@@ -63,6 +65,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --skip-recursive-off)
       SKIP_RECURSIVE_OFF=1
+      shift
+      ;;
+    --skip-follow-inner)
+      SKIP_FOLLOW_INNER=1
       shift
       ;;
     --prepare-only)
@@ -292,6 +298,56 @@ run_case() {
   capture_case "$case_dir" "$case_start"
 }
 
+run_existing_archive_case() {
+  local name="$1"
+  local source_archive="$2"
+  local archive_name="$3"
+  local recursive_pref="$4"
+  local wait_message="$5"
+  local case_dir="$RUN_DIR/$name"
+  local archive="$case_dir/$archive_name"
+  local open_status
+  local case_start
+
+  mkdir -p "$case_dir"
+
+  if [[ ! -f "$source_archive" ]]; then
+    {
+      echo "case=$name"
+      echo "skipped=1"
+      echo "missing_source=$source_archive"
+      echo "finished_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    } > "$case_dir/case-context.txt"
+    echo "[*] skipping $name: missing $source_archive"
+    return 0
+  fi
+
+  set_recursive_pref "$recursive_pref"
+  read_recursive_pref "$case_dir/dearchive-recursively.txt" || true
+  /bin/cp -p "$source_archive" "$archive"
+  capture_path_snapshot "$source_archive" "$case_dir/source-archive-snapshot.txt"
+  capture_path_snapshot "$archive" "$case_dir/input-archive-snapshot.txt"
+
+  {
+    echo "case=$name"
+    echo "source_archive=$source_archive"
+    echo "archive=$archive"
+    echo "recursive_pref=$recursive_pref"
+    echo "started_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  } > "$case_dir/case-context.txt"
+
+  echo "[*] opening $name: $archive"
+  case_start="$(date +%s)"
+  set +e
+  /usr/bin/open "$archive" > "$case_dir/open.stdout.txt" 2> "$case_dir/open.stderr.txt"
+  open_status=$?
+  set -e
+  echo "$open_status" > "$case_dir/open-status.txt"
+
+  prompt_or_sleep "$wait_message"
+  capture_case "$case_dir" "$case_start"
+}
+
 write_summary() {
   local summary="$RUN_DIR/run-summary.md"
   {
@@ -377,6 +433,7 @@ fi
   echo "wait_mode=$WAIT_MODE"
   echo "wait_seconds=$WAIT_SECONDS"
   echo "skip_recursive_off=$SKIP_RECURSIVE_OFF"
+  echo "skip_follow_inner=$SKIP_FOLLOW_INNER"
   echo "prepare_only=$PREPARE_ONLY"
   echo "restore_preferences=$RESTORE_PREFERENCES"
   echo "quarantine_value=$QVAL"
@@ -477,6 +534,15 @@ run_case \
   "true" \
   "Wait for Archive Utility recursive nested extraction to finish"
 
+if [[ "$SKIP_FOLLOW_INNER" != "1" ]]; then
+  run_existing_archive_case \
+    "case-nested-quarantined-follow-inner" \
+    "$RUN_DIR/case-nested-quarantined-recursive/nested/inner-payload.zip" \
+    "inner-payload.zip" \
+    "true" \
+    "Wait for Archive Utility second-hop inner ZIP extraction to finish"
+fi
+
 if [[ "$SKIP_RECURSIVE_OFF" != "1" ]]; then
   run_case \
     "case-nested-quarantined-recursive-off" \
@@ -494,6 +560,15 @@ run_case \
   "0" \
   "true" \
   "Wait for Archive Utility unquarantined-control extraction to finish"
+
+if [[ "$SKIP_FOLLOW_INNER" != "1" ]]; then
+  run_existing_archive_case \
+    "case-nested-unquarantined-follow-inner" \
+    "$RUN_DIR/case-nested-unquarantined/nested/inner-payload.zip" \
+    "inner-payload.zip" \
+    "true" \
+    "Wait for Archive Utility second-hop unquarantined inner ZIP extraction to finish"
+fi
 
 read_recursive_pref "$RUN_DIR/snapshots/dearchive-recursively-after-matrix.txt" || true
 write_summary
