@@ -33,7 +33,9 @@ Defaults:
   wait: prompt
 
 Run from a normal Terminal while booted into the target OS. GUI open behavior
-from nested agent shells may be unreliable.
+from nested agent shells may be unreliable. The script pins Archive Utility to
+extract into the same folder as the archive for comparable case snapshots, then
+restores the prior Archive Utility preference domain on exit.
 EOF
   exit "$code"
 }
@@ -112,6 +114,8 @@ QVAL="0081;$(printf '%x' "$(date +%s)");Safari;Packet009"
 LOG_PID=""
 PREF_EXISTED=0
 PREF_VALUE=""
+PREF_DOMAIN_EXISTED=0
+PREF_EXPORT=""
 
 require_cmd /usr/bin/ditto
 require_cmd /usr/bin/open
@@ -152,6 +156,16 @@ set_recursive_pref() {
 restore_recursive_pref() {
   [[ "$RESTORE_PREFERENCES" == "1" ]] || return 0
 
+  if [[ -n "$PREF_EXPORT" ]]; then
+    if [[ "$PREF_DOMAIN_EXISTED" == "1" && -s "$PREF_EXPORT" ]]; then
+      /usr/bin/defaults delete com.apple.archiveutility >/dev/null 2>&1 || true
+      /usr/bin/defaults import com.apple.archiveutility "$PREF_EXPORT" >/dev/null 2>&1 || true
+    else
+      /usr/bin/defaults delete com.apple.archiveutility >/dev/null 2>&1 || true
+    fi
+    return 0
+  fi
+
   if [[ "$PREF_EXISTED" == "1" ]]; then
     case "$PREF_VALUE" in
       1|true|TRUE|True|YES|yes)
@@ -164,6 +178,32 @@ restore_recursive_pref() {
   else
     /usr/bin/defaults delete com.apple.archiveutility dearchive-recursively >/dev/null 2>&1 || true
   fi
+}
+
+snapshot_archiveutility_preferences() {
+  local out_dir="$1"
+  mkdir -p "$out_dir"
+  PREF_EXPORT="$out_dir/archiveutility-before.plist"
+
+  if /usr/bin/defaults export com.apple.archiveutility "$PREF_EXPORT" >/dev/null 2>&1; then
+    PREF_DOMAIN_EXISTED=1
+  else
+    PREF_DOMAIN_EXISTED=0
+    : > "$PREF_EXPORT"
+  fi
+
+  /usr/bin/defaults read com.apple.archiveutility > "$out_dir/archiveutility-before.txt" 2>&1 || true
+}
+
+pin_archiveutility_case_preferences() {
+  /usr/bin/defaults write com.apple.archiveutility dearchive-into -string "."
+  /usr/bin/defaults write com.apple.archiveutility dearchive-into-location -dict Selection UseSameFolder
+  /usr/bin/defaults write com.apple.archiveutility dearchive-move-after -string "."
+  /usr/bin/defaults write com.apple.archiveutility dearchive-move-after-location -dict Selection UseSameFolder
+  /usr/bin/defaults write com.apple.archiveutility dearchive-move-intermediate-after -string "/dev/null"
+  /usr/bin/defaults write com.apple.archiveutility dearchive-move-intermediate-after-location -dict Selection Delete
+  /usr/bin/defaults write com.apple.archiveutility dearchive-recursively -bool true
+  /usr/bin/defaults read com.apple.archiveutility > "$RUN_DIR/snapshots/archiveutility-pinned.txt" 2>&1 || true
 }
 
 stop_log_stream() {
@@ -416,6 +456,7 @@ EOF
 }
 
 write_host_state "$RUN_DIR/metadata/host-state"
+snapshot_archiveutility_preferences "$RUN_DIR/snapshots"
 
 if read_recursive_pref "$RUN_DIR/snapshots/dearchive-recursively-before.txt"; then
   PREF_EXISTED=1
@@ -424,6 +465,8 @@ else
   PREF_EXISTED=0
   PREF_VALUE=""
 fi
+
+pin_archiveutility_case_preferences
 
 {
   echo "workspace=$WORKSPACE"
