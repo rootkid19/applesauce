@@ -289,16 +289,26 @@ capture_spctl_for_apps() {
 capture_case() {
   local case_dir="$1"
   local case_start_epoch="$2"
+  local case_end_epoch
+  local log_start
+  local log_end
+  local start_marker="$case_dir/case-start.marker"
+  case_end_epoch="$(date +%s)"
+  log_start="$(date -r "$case_start_epoch" '+%Y-%m-%d %H:%M:%S')"
+  log_end="$(date -r "$case_end_epoch" '+%Y-%m-%d %H:%M:%S')"
+
   /usr/bin/find "$case_dir" -maxdepth 10 -print > "$case_dir/tree.txt" 2>&1 || true
   /usr/bin/xattr -lr "$case_dir" > "$case_dir/xattrs-recursive.txt" 2>&1 || true
   capture_spctl_for_apps "$case_dir" "$case_dir/spctl-apps.txt"
-  /usr/bin/log show --last 10m --style compact --predicate "$LOG_PREDICATE" > "$case_dir/log-show.txt" 2>&1 || true
+  /usr/bin/log show --start "$log_start" --end "$log_end" --style compact --predicate "$LOG_PREDICATE" > "$case_dir/log-show.txt" 2>&1 || true
   capture_archive_targets "$case_dir"
-  capture_fallback_outputs "$case_dir"
+  capture_fallback_outputs "$case_dir" "$start_marker"
   {
     echo "case_start_epoch=$case_start_epoch"
-    echo "case_end_epoch=$(date +%s)"
+    echo "case_end_epoch=$case_end_epoch"
     echo "case_end_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    echo "log_start=$log_start"
+    echo "log_end=$log_end"
   } >> "$case_dir/case-context.txt"
 }
 
@@ -320,6 +330,7 @@ capture_archive_targets() {
 
 capture_fallback_outputs() {
   local case_dir="$1"
+  local start_marker="$2"
   local out="$case_dir/fallback-output-candidates.txt"
   local roots=("$HOME/Downloads" "$HOME/Desktop")
   local root
@@ -342,7 +353,7 @@ capture_fallback_outputs() {
         /usr/bin/stat -f 'dev=%d ino=%i mode=%p uid=%u gid=%g size=%z mtime=%m birthtime=%B type=%HT' "$candidate" 2>&1 || true
         /usr/bin/xattr -l "$candidate" 2>&1 || true
         echo
-      done < <(/usr/bin/find "$root" -maxdepth 3 \( -name 'Payload*.app' -o -name 'inner-payload*.zip' -o -name 'nested' \) -print 2>/dev/null)
+      done < <(/usr/bin/find "$root" -maxdepth 3 \( -name 'Payload*.app' -o -name 'inner-payload*.zip' -o -name 'nested*' \) -newer "$start_marker" -print 2>/dev/null)
     done
     echo "candidate_count=$candidate_count"
   } >> "$out" 2>&1 || true
@@ -478,6 +489,7 @@ run_case() {
 
   echo "[*] opening $name: $archive"
   case_start="$(date +%s)"
+  : > "$case_dir/case-start.marker"
   set +e
   /usr/bin/open "$archive" > "$case_dir/open.stdout.txt" 2> "$case_dir/open.stderr.txt"
   open_status=$?
@@ -540,6 +552,7 @@ run_existing_archive_case() {
 
   echo "[*] opening $name: $archive"
   case_start="$(date +%s)"
+  : > "$case_dir/case-start.marker"
   set +e
   /usr/bin/open "$archive" > "$case_dir/open.stdout.txt" 2> "$case_dir/open.stderr.txt"
   open_status=$?
