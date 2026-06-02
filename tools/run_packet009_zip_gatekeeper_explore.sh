@@ -293,11 +293,161 @@ capture_case() {
   /usr/bin/xattr -lr "$case_dir" > "$case_dir/xattrs-recursive.txt" 2>&1 || true
   capture_spctl_for_apps "$case_dir" "$case_dir/spctl-apps.txt"
   /usr/bin/log show --last 10m --style compact --predicate "$LOG_PREDICATE" > "$case_dir/log-show.txt" 2>&1 || true
+  capture_archive_targets "$case_dir"
+  capture_fallback_outputs "$case_dir"
   {
     echo "case_start_epoch=$case_start_epoch"
     echo "case_end_epoch=$(date +%s)"
     echo "case_end_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   } >> "$case_dir/case-context.txt"
+}
+
+capture_archive_targets() {
+  local case_dir="$1"
+  local out="$case_dir/archive-targets.txt"
+  : > "$out"
+
+  if [[ ! -f "$case_dir/log-show.txt" ]]; then
+    echo "log_show=absent" >> "$out"
+    return 0
+  fi
+
+  {
+    echo "# ArchiveService file-issue-extension targets observed in this case log"
+    /usr/bin/sed -n 's/.*file-issue-extension target:\(.*\) extension-class:.*/target=\1/p' "$case_dir/log-show.txt" | /usr/bin/sort -u
+  } >> "$out" 2>&1 || true
+}
+
+capture_fallback_outputs() {
+  local case_dir="$1"
+  local out="$case_dir/fallback-output-candidates.txt"
+  local roots=("$HOME/Downloads" "$HOME/Desktop")
+  local root
+  local candidate_count=0
+  : > "$out"
+
+  {
+    echo "# Diagnostic only: candidates outside the case dir do not make the case valid."
+    for root in "${roots[@]}"; do
+      echo "## root=$root"
+      if [[ ! -d "$root" ]]; then
+        echo "missing=1"
+        continue
+      fi
+
+      while IFS= read -r candidate; do
+        candidate_count=$((candidate_count + 1))
+        echo "candidate=$candidate"
+        /bin/ls -ldeO@ "$candidate" 2>&1 || true
+        /usr/bin/stat -f 'dev=%d ino=%i mode=%p uid=%u gid=%g size=%z mtime=%m birthtime=%B type=%HT' "$candidate" 2>&1 || true
+        /usr/bin/xattr -l "$candidate" 2>&1 || true
+        echo
+      done < <(/usr/bin/find "$root" -maxdepth 3 \( -name 'Payload*.app' -o -name 'inner-payload*.zip' -o -name 'nested' \) -print 2>/dev/null)
+    done
+    echo "candidate_count=$candidate_count"
+  } >> "$out" 2>&1 || true
+}
+
+write_extraction_status() {
+  local name="$1"
+  local case_dir="$2"
+  local expected="$3"
+  local archive="${4:-}"
+  local missing_source="${5:-}"
+  local open_status="absent"
+  local case_status="malformed"
+  local reason="unknown"
+  local payload_matches=("$case_dir"/**/Payload.app(N/))
+  local inner_matches=("$case_dir"/**/inner-payload.zip(N.))
+  local payload="${payload_matches[1]:-}"
+  local inner="${inner_matches[1]:-}"
+
+  if [[ -f "$case_dir/open-status.txt" ]]; then
+    open_status="$(sed -n '1p' "$case_dir/open-status.txt")"
+  fi
+
+  case "$expected" in
+    payload-app)
+      if [[ -n "$payload" ]]; then
+        case_status="ok"
+        reason="payload_app_found"
+      else
+        case_status="malformed"
+        reason="expected_payload_app_missing"
+      fi
+      ;;
+    inner-or-payload)
+      if [[ -n "$payload" ]]; then
+        case_status="ok"
+        reason="payload_app_found"
+      elif [[ -n "$inner" ]]; then
+        case_status="ok"
+        reason="inner_zip_found"
+      else
+        case_status="malformed"
+        reason="expected_inner_zip_or_payload_app_missing"
+      fi
+      ;;
+    skipped)
+      case_status="skipped"
+      reason="missing_source_archive"
+      ;;
+    *)
+      case_status="malformed"
+      reason="unsupported_expected_output"
+      ;;
+  esac
+
+  {
+    echo "case=$name"
+    echo "status=$case_status"
+    echo "reason=$reason"
+    echo "expected=$expected"
+    echo "archive=$archive"
+    echo "open_status=$open_status"
+    echo "payload_app=$payload"
+    echo "inner_payload_zip=$inner"
+    echo "missing_source=$missing_source"
+    echo "archive_targets_file=$case_dir/archive-targets.txt"
+    echo "fallback_outputs_file=$case_dir/fallback-output-candidates.txt"
+  } > "$case_dir/extraction-status.txt"
+
+  if [[ "$case_status" == "malformed" ]]; then
+    echo "[!] $name extraction status: malformed ($reason); see $case_dir/extraction-status.txt" >&2
+  fi
+}
+
+write_run_validity() {
+  local validity="$RUN_DIR/run-validity.txt"
+  local status_files=("$RUN_DIR"/case-*/extraction-status.txt(N))
+  local ok=0
+  local malformed=0
+  local skipped=0
+  local f
+
+  for f in "${status_files[@]}"; do
+    if /usr/bin/grep -q '^status=ok$' "$f" 2>/dev/null; then
+      ok=$((ok + 1))
+    elif /usr/bin/grep -q '^status=malformed$' "$f" 2>/dev/null; then
+      malformed=$((malformed + 1))
+    elif /usr/bin/grep -q '^status=skipped$' "$f" 2>/dev/null; then
+      skipped=$((skipped + 1))
+    fi
+  done
+
+  {
+    if [[ "$malformed" -gt 0 ]]; then
+      echo "run_validity=invalid"
+    elif [[ "$ok" -gt 0 ]]; then
+      echo "run_validity=interpretable"
+    else
+      echo "run_validity=no_runtime_cases"
+    fi
+    echo "ok_cases=$ok"
+    echo "malformed_cases=$malformed"
+    echo "skipped_cases=$skipped"
+    echo "status_files=${#status_files[@]}"
+  } > "$validity"
 }
 
 run_case() {
@@ -336,6 +486,17 @@ run_case() {
 
   prompt_or_sleep "$wait_message"
   capture_case "$case_dir" "$case_start"
+  case "$name" in
+    case-direct-quarantined)
+      write_extraction_status "$name" "$case_dir" "payload-app" "$archive"
+      ;;
+    case-nested-*)
+      write_extraction_status "$name" "$case_dir" "inner-or-payload" "$archive"
+      ;;
+    *)
+      write_extraction_status "$name" "$case_dir" "inner-or-payload" "$archive"
+      ;;
+  esac
 }
 
 run_existing_archive_case() {
@@ -358,6 +519,7 @@ run_existing_archive_case() {
       echo "missing_source=$source_archive"
       echo "finished_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     } > "$case_dir/case-context.txt"
+    write_extraction_status "$name" "$case_dir" "skipped" "$archive" "$source_archive"
     echo "[*] skipping $name: missing $source_archive"
     return 0
   fi
@@ -386,6 +548,7 @@ run_existing_archive_case() {
 
   prompt_or_sleep "$wait_message"
   capture_case "$case_dir" "$case_start"
+  write_extraction_status "$name" "$case_dir" "payload-app" "$archive"
 }
 
 write_summary() {
@@ -407,6 +570,30 @@ write_summary() {
       sed -n '1,40p' "$f"
       echo
     done
+    if [[ -f "$RUN_DIR/run-validity.txt" ]]; then
+      echo "## Extraction validity"
+      echo
+      cat "$RUN_DIR/run-validity.txt"
+      echo
+      for f in "$RUN_DIR"/case-*/extraction-status.txt; do
+        [[ -f "$f" ]] || continue
+        echo "### ${f#$RUN_DIR/}"
+        sed -n '1,80p' "$f"
+        echo
+        local target_file="${f:h}/archive-targets.txt"
+        if [[ -f "$target_file" ]]; then
+          echo "#### ${target_file#$RUN_DIR/}"
+          sed -n '1,80p' "$target_file"
+          echo
+        fi
+        local fallback_file="${f:h}/fallback-output-candidates.txt"
+        if [[ -f "$fallback_file" ]]; then
+          echo "#### ${fallback_file#$RUN_DIR/}"
+          sed -n '1,120p' "$fallback_file"
+          echo
+        fi
+      done
+    fi
     echo "## Case xattr excerpts"
     echo
     for f in "$RUN_DIR"/case-*/xattrs-recursive.txt; do
@@ -614,6 +801,7 @@ if [[ "$SKIP_FOLLOW_INNER" != "1" ]]; then
 fi
 
 read_recursive_pref "$RUN_DIR/snapshots/dearchive-recursively-after-matrix.txt" || true
+write_run_validity
 write_summary
 write_handoff
 write_sha256_manifest "$RUN_DIR" "$RUN_DIR/metadata/sha256-manifest.txt"
