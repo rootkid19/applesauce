@@ -35,7 +35,9 @@ Defaults:
 Run from a normal Terminal while booted into the target OS. GUI open behavior
 from nested agent shells may be unreliable. The script pins Archive Utility to
 extract into the same folder as the archive for comparable case snapshots, then
-restores the prior Archive Utility preference domain on exit.
+restores the prior Archive Utility preference domain on exit. If Archive Utility
+ignores the same-folder preference and writes to common GUI destinations such as
+~/Downloads, the collector records and validates the actual output path.
 EOF
   exit "$code"
 }
@@ -286,6 +288,63 @@ capture_spctl_for_apps() {
   done
 }
 
+fallback_roots() {
+  print -r -- "$HOME/Downloads"
+  print -r -- "$HOME/Desktop"
+}
+
+output_location() {
+  local path="$1"
+  local case_dir="$2"
+
+  if [[ "$path" == "$case_dir" || "$path" == "$case_dir"/* ]]; then
+    echo "case-dir"
+  else
+    echo "fallback"
+  fi
+}
+
+find_new_output() {
+  local case_dir="$1"
+  local start_marker="$2"
+  local kind="$3"
+  local pattern=""
+  local type_arg=""
+  local root
+  local found=""
+
+  case "$kind" in
+    payload-app)
+      pattern='Payload*.app'
+      type_arg='d'
+      ;;
+    inner-zip)
+      pattern='inner-payload*.zip'
+      type_arg='f'
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+
+  found="$(/usr/bin/find "$case_dir" -maxdepth 10 -name "$pattern" -type "$type_arg" -print 2>/dev/null | /usr/bin/head -1)"
+  if [[ -n "$found" ]]; then
+    print -r -- "$found"
+    return 0
+  fi
+
+  while IFS= read -r root; do
+    [[ -d "$root" && -f "$start_marker" ]] || continue
+    found="$(/usr/bin/find "$root" -maxdepth 5 -name "$pattern" -type "$type_arg" -newer "$start_marker" -print 2>/dev/null | /usr/bin/head -1)"
+    if [[ -n "$found" ]]; then
+      print -r -- "$found"
+      return 0
+    fi
+  done < <(fallback_roots)
+
+  return 1
+}
+
 capture_case() {
   local case_dir="$1"
   local case_start_epoch="$2"
@@ -332,14 +391,13 @@ capture_fallback_outputs() {
   local case_dir="$1"
   local start_marker="$2"
   local out="$case_dir/fallback-output-candidates.txt"
-  local roots=("$HOME/Downloads" "$HOME/Desktop")
   local root
   local candidate_count=0
   : > "$out"
 
   {
-    echo "# Diagnostic only: candidates outside the case dir do not make the case valid."
-    for root in "${roots[@]}"; do
+    echo "# Candidates outside the case dir are accepted only when newer than case-start.marker."
+    while IFS= read -r root; do
       echo "## root=$root"
       if [[ ! -d "$root" ]]; then
         echo "missing=1"
@@ -352,9 +410,12 @@ capture_fallback_outputs() {
         /bin/ls -ldeO@ "$candidate" 2>&1 || true
         /usr/bin/stat -f 'dev=%d ino=%i mode=%p uid=%u gid=%g size=%z mtime=%m birthtime=%B type=%HT' "$candidate" 2>&1 || true
         /usr/bin/xattr -l "$candidate" 2>&1 || true
+        if [[ -d "$candidate" ]]; then
+          /usr/bin/xattr -lr "$candidate" 2>&1 || true
+        fi
         echo
       done < <(/usr/bin/find "$root" -maxdepth 3 \( -name 'Payload*.app' -o -name 'inner-payload*.zip' -o -name 'nested*' \) -newer "$start_marker" -print 2>/dev/null)
-    done
+    done < <(fallback_roots)
     echo "candidate_count=$candidate_count"
   } >> "$out" 2>&1 || true
 }
@@ -368,13 +429,23 @@ write_extraction_status() {
   local open_status="absent"
   local case_status="malformed"
   local reason="unknown"
-  local payload_matches=("$case_dir"/**/Payload.app(N/))
-  local inner_matches=("$case_dir"/**/inner-payload.zip(N.))
-  local payload="${payload_matches[1]:-}"
-  local inner="${inner_matches[1]:-}"
+  local start_marker="$case_dir/case-start.marker"
+  local payload=""
+  local inner=""
+  local payload_location=""
+  local inner_location=""
 
   if [[ -f "$case_dir/open-status.txt" ]]; then
     open_status="$(sed -n '1p' "$case_dir/open-status.txt")"
+  fi
+
+  payload="$(find_new_output "$case_dir" "$start_marker" "payload-app" || true)"
+  inner="$(find_new_output "$case_dir" "$start_marker" "inner-zip" || true)"
+  if [[ -n "$payload" ]]; then
+    payload_location="$(output_location "$payload" "$case_dir")"
+  fi
+  if [[ -n "$inner" ]]; then
+    inner_location="$(output_location "$inner" "$case_dir")"
   fi
 
   case "$expected" in
@@ -417,7 +488,9 @@ write_extraction_status() {
     echo "archive=$archive"
     echo "open_status=$open_status"
     echo "payload_app=$payload"
+    echo "payload_location=$payload_location"
     echo "inner_payload_zip=$inner"
+    echo "inner_location=$inner_location"
     echo "missing_source=$missing_source"
     echo "archive_targets_file=$case_dir/archive-targets.txt"
     echo "fallback_outputs_file=$case_dir/fallback-output-candidates.txt"
@@ -426,6 +499,15 @@ write_extraction_status() {
   if [[ "$case_status" == "malformed" ]]; then
     echo "[!] $name extraction status: malformed ($reason); see $case_dir/extraction-status.txt" >&2
   fi
+}
+
+resolved_case_output() {
+  local case_name="$1"
+  local key="$2"
+  local status_file="$RUN_DIR/$case_name/extraction-status.txt"
+
+  [[ -f "$status_file" ]] || return 1
+  /usr/bin/sed -n "s/^${key}=//p" "$status_file" | /usr/bin/head -1
 }
 
 write_run_validity() {
@@ -778,9 +860,10 @@ run_case \
   "Wait for Archive Utility recursive nested extraction to finish"
 
 if [[ "$SKIP_FOLLOW_INNER" != "1" ]]; then
+  INNER_QUARANTINED_SOURCE="$(resolved_case_output "case-nested-quarantined-recursive" "inner_payload_zip" || true)"
   run_existing_archive_case \
     "case-nested-quarantined-follow-inner" \
-    "$RUN_DIR/case-nested-quarantined-recursive/nested/inner-payload.zip" \
+    "$INNER_QUARANTINED_SOURCE" \
     "inner-payload.zip" \
     "true" \
     "Wait for Archive Utility second-hop inner ZIP extraction to finish"
@@ -805,9 +888,10 @@ run_case \
   "Wait for Archive Utility unquarantined-control extraction to finish"
 
 if [[ "$SKIP_FOLLOW_INNER" != "1" ]]; then
+  INNER_UNQUARANTINED_SOURCE="$(resolved_case_output "case-nested-unquarantined" "inner_payload_zip" || true)"
   run_existing_archive_case \
     "case-nested-unquarantined-follow-inner" \
-    "$RUN_DIR/case-nested-unquarantined/nested/inner-payload.zip" \
+    "$INNER_UNQUARANTINED_SOURCE" \
     "inner-payload.zip" \
     "true" \
     "Wait for Archive Utility second-hop unquarantined inner ZIP extraction to finish"
