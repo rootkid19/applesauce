@@ -53,3 +53,5 @@ target-specific collectors or gates.
 | `tools/run_packet004_import_move_gate.sh` | Run the FileProvider import/move gate. |
 | `tools/run_packet004_importdomain_gate.sh` | Run the FileProvider importDomain gate. |
 | `tools/run_packet006_scopedbookmark_gate.sh` | Run the ScopedBookmark runtime gate. |
+| `tools/run_packet009_supplied_zip_probe.sh` | Probe a supplied ZIP through Archive Utility and record quarantine on the extracted app. |
+| `tools/run_packet009_zip_gatekeeper_explore.sh` | Explore Packet 009 ZIP/Gatekeeper extraction cases. |

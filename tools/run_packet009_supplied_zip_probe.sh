@@ -142,7 +142,7 @@ path_snapshot() {
     echo "path=$path"
     if [[ -e "$path" ]]; then
       /bin/ls -laeO@ "$path" || true
-      /usr/bin/stat -f 'dev=%d ino=%i mode=%p uid=%u gid=%g size=%z mtime=%m birthtime=%B type=%HT' "$path" || true
+      /usr/bin/stat -f 'dev=%d ino=%i mode=%p uid=%u gid=%g size=%z mtime=%m birthtime=%B ctime=%c type=%HT' "$path" || true
       /usr/bin/xattr -l "$path" || true
     else
       echo "exists=0"
@@ -156,10 +156,13 @@ record_app_candidate_table() {
   for root in "$HOME/Downloads" "$HOME/Desktop"; do
     [[ -d "$root" ]] || continue
     /usr/bin/find "$root" -maxdepth 8 -name 'CVE28914Payload.app' -print 2>/dev/null | while IFS= read -r app; do
-      local birth mtime
+      local birth mtime ctime exe_ctime exe
+      exe="$app/Contents/MacOS/payload"
       birth="$(/usr/bin/stat -f '%B' "$app" 2>/dev/null || echo 0)"
       mtime="$(/usr/bin/stat -f '%m' "$app" 2>/dev/null || echo 0)"
-      printf '%s\t%s\t%s\n' "$birth" "$mtime" "$app"
+      ctime="$(/usr/bin/stat -f '%c' "$app" 2>/dev/null || echo 0)"
+      exe_ctime="$(/usr/bin/stat -f '%c' "$exe" 2>/dev/null || echo 0)"
+      printf '%s\t%s\t%s\t%s\t%s\n' "$birth" "$mtime" "$ctime" "$exe_ctime" "$app"
     done
   done | /usr/bin/sort -nr >> "$out"
 }
@@ -168,9 +171,12 @@ select_candidate_app() {
   local table="$1"
   local start_epoch="$2"
   local selected=""
-  while IFS=$'\t' read -r birth mtime path; do
+  while IFS=$'\t' read -r birth mtime ctime exe_ctime path; do
     [[ -n "${path:-}" ]] || continue
-    if [[ "$birth" == <-> && "$birth" -ge $((start_epoch - 5)) ]]; then
+    if [[ "$birth" == <-> && "$birth" -ge $((start_epoch - 5)) ]] ||
+       [[ "$mtime" == <-> && "$mtime" -ge $((start_epoch - 5)) ]] ||
+       [[ "$ctime" == <-> && "$ctime" -ge $((start_epoch - 5)) ]] ||
+       [[ "$exe_ctime" == <-> && "$exe_ctime" -ge $((start_epoch - 5)) ]]; then
       selected="$path"
       break
     fi
