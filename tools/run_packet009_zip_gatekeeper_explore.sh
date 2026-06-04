@@ -24,6 +24,8 @@ Options:
   --wait-seconds <n>            seconds for --wait seconds (default: 20)
   --skip-recursive-off          skip the recursive-disabled control
   --skip-follow-inner           skip second-hop opens of extracted inner ZIPs
+  --name-suffix <suffix>        fixed suffix for Payload-<suffix>.app and
+                                nested-<suffix> (use the same value on 26.4/26.5)
   --prepare-only                build inputs and metadata without opening ZIPs
   --no-restore-preferences      leave Archive Utility recursive preference as set
   -h, --help                    show this help
@@ -49,6 +51,7 @@ SKIP_FOLLOW_INNER=0
 RESTORE_PREFERENCES=1
 OUT_OVERRIDE=""
 PREPARE_ONLY=0
+NAME_SUFFIX=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -74,6 +77,11 @@ while [[ $# -gt 0 ]]; do
     --skip-follow-inner)
       SKIP_FOLLOW_INNER=1
       shift
+      ;;
+    --name-suffix)
+      [[ $# -ge 2 ]] || usage
+      NAME_SUFFIX="$2"
+      shift 2
       ;;
     --prepare-only)
       PREPARE_ONLY=1
@@ -103,6 +111,11 @@ esac
 
 if ! [[ "$WAIT_SECONDS" == <-> ]]; then
   echo "--wait-seconds must be an integer" >&2
+  exit 2
+fi
+
+if [[ -n "$NAME_SUFFIX" && "$NAME_SUFFIX" == *[!A-Za-z0-9._-]* ]]; then
+  echo "--name-suffix may contain only A-Z a-z 0-9 . _ -" >&2
   exit 2
 fi
 
@@ -771,8 +784,9 @@ echo "[*] run dir: $RUN_DIR"
 echo "[*] build: $(safe_sw_build_slug)"
 echo "[*] wait mode: $WAIT_MODE"
 
-PAYLOAD_NAME="Payload-$STAMP.app"
-NESTED_NAME="nested-$STAMP"
+PAYLOAD_SUFFIX="${NAME_SUFFIX:-$STAMP}"
+PAYLOAD_NAME="Payload-$PAYLOAD_SUFFIX.app"
+NESTED_NAME="nested-$PAYLOAD_SUFFIX"
 PAYLOAD="$RUN_DIR/work/$PAYLOAD_NAME"
 {
   echo "payload_name=$PAYLOAD_NAME"
