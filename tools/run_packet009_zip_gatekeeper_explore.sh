@@ -695,9 +695,9 @@ write_summary() {
       [[ -f "$f" ]] || continue
       echo "### ${f#$RUN_DIR/}"
       if command -v rg >/dev/null 2>&1; then
-        rg -n "com.apple.quarantine|Payload.app|inner-payload|nested-payload|direct-payload" "$f" || true
+        rg -n "com.apple.quarantine|Payload[^/]*\\.app|inner-payload|nested-payload|direct-payload" "$f" || true
       else
-        /usr/bin/grep -En "com.apple.quarantine|Payload.app|inner-payload|nested-payload|direct-payload" "$f" || true
+        /usr/bin/grep -En "com.apple.quarantine|Payload[^/]*\\.app|inner-payload|nested-payload|direct-payload" "$f" || true
       fi
       echo
     done
@@ -727,7 +727,7 @@ Compare this run with the paired run from the other Tahoe build. Answer only:
 1. Did extraction occur through normal LaunchServices / Archive Utility?
 2. Did the nested/recursive case materialize and process \`inner-payload.zip\`?
 3. Did the intermediate inner ZIP retain, lose, or never acquire \`com.apple.quarantine\`?
-4. Did the final \`Payload.app\` differ between 26.4 and 26.5?
+4. Did the final \`Payload*.app\` differ between 26.4 and 26.5?
 5. Do the direct and unquarantined controls rule out generic Archive Utility/xattr noise?
 6. Is validation earned, or should Packet 009 park as root-cause-confirmed with no proven local trigger?
 
@@ -771,7 +771,14 @@ echo "[*] run dir: $RUN_DIR"
 echo "[*] build: $(safe_sw_build_slug)"
 echo "[*] wait mode: $WAIT_MODE"
 
-PAYLOAD="$RUN_DIR/work/Payload.app"
+PAYLOAD_NAME="Payload-$STAMP.app"
+NESTED_NAME="nested-$STAMP"
+PAYLOAD="$RUN_DIR/work/$PAYLOAD_NAME"
+{
+  echo "payload_name=$PAYLOAD_NAME"
+  echo "nested_name=$NESTED_NAME"
+} >> "$RUN_DIR/run-context.txt"
+
 mkdir -p "$PAYLOAD/Contents/MacOS"
 cat > "$PAYLOAD/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
@@ -796,13 +803,13 @@ SH
 
 (
   cd "$RUN_DIR/work"
-  /usr/bin/ditto --norsrc --noextattr --noqtn --noacl -c -k --keepParent Payload.app "$RUN_DIR/inputs/direct-payload.zip"
-  /usr/bin/ditto --norsrc --noextattr --noqtn --noacl -c -k --keepParent Payload.app "$RUN_DIR/inputs/inner-payload.zip"
+  /usr/bin/ditto --norsrc --noextattr --noqtn --noacl -c -k --keepParent "$PAYLOAD_NAME" "$RUN_DIR/inputs/direct-payload.zip"
+  /usr/bin/ditto --norsrc --noextattr --noqtn --noacl -c -k --keepParent "$PAYLOAD_NAME" "$RUN_DIR/inputs/inner-payload.zip"
   /usr/bin/xattr -d com.apple.quarantine "$RUN_DIR/inputs/inner-payload.zip" >/dev/null 2>&1 || true
-  /bin/mkdir -p nested
-  /bin/cp -p "$RUN_DIR/inputs/inner-payload.zip" nested/inner-payload.zip
-  /usr/bin/xattr -d com.apple.quarantine nested/inner-payload.zip >/dev/null 2>&1 || true
-  /usr/bin/ditto --norsrc --noextattr --noqtn --noacl -c -k --keepParent nested "$RUN_DIR/inputs/nested-payload.zip"
+  /bin/mkdir -p "$NESTED_NAME"
+  /bin/cp -p "$RUN_DIR/inputs/inner-payload.zip" "$NESTED_NAME/inner-payload.zip"
+  /usr/bin/xattr -d com.apple.quarantine "$NESTED_NAME/inner-payload.zip" >/dev/null 2>&1 || true
+  /usr/bin/ditto --norsrc --noextattr --noqtn --noacl -c -k --keepParent "$NESTED_NAME" "$RUN_DIR/inputs/nested-payload.zip"
   /bin/cp -p "$RUN_DIR/inputs/nested-payload.zip" "$RUN_DIR/inputs/nested-payload-unquarantined.zip"
 )
 
