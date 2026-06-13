@@ -15,6 +15,7 @@ target-specific collectors or gates.
 | `tools/build_dsc_extractor_bundle_wrapper.sh` | Build the local dyld shared-cache extractor wrapper. |
 | `tools/collect_campaign1_dyld_members.sh` | Collect LaunchServices dyld-cache members. |
 | `tools/collect_campaign1_host_state.sh` | Capture basic host state for runtime comparisons. |
+| `tools/collect_f022_iomfb_kc_artifacts.sh` | Collect read-only F022 IOMobileFramebuffer/IOSurface kernelcollection artifacts. |
 | `tools/collect_packet002_accounts_artifacts.sh` | Collect Accounts/Privacy standalone artifacts. |
 | `tools/collect_packet002_authority_maps.sh` | Collect authority-map metadata for Accounts/Privacy artifacts. |
 | `tools/collect_packet002_dyld_members.sh` | Collect Accounts/Privacy dyld-cache members. |
