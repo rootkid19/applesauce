@@ -107,7 +107,9 @@ append_bounded_cmd() {
     printf 'timeout_seconds=%s\n\n' "$seconds"
   } >> "$out" 2>&1
 
-  "$@" >> "$out" 2>&1 &
+  (
+    "$@"
+  ) >> "$out" 2>&1 &
   local pid=$!
   (
     sleep "$seconds"
@@ -116,7 +118,7 @@ append_bounded_cmd() {
     kill -KILL "$pid" >/dev/null 2>&1 || true
   ) &
   local killer=$!
-  wait "$pid"
+  wait "$pid" 2>/dev/null
   local rc=$?
   kill "$killer" >/dev/null 2>&1 || true
   wait "$killer" 2>/dev/null || true
@@ -204,9 +206,11 @@ capture_context() {
   fi
   if command -v kmutil >/dev/null 2>&1; then
     append_bounded_cmd "$out" 30 kmutil showloaded
+    append_bounded_cmd "$out" 45 kmutil inspect
     append_bounded_cmd "$out" 45 kmutil inspect --volume-root "$ROOT"
   else
     printf '\n== kmutil showloaded ==\nmissing kmutil\n' >> "$out"
+    printf '\n== kmutil inspect ==\nmissing kmutil\n' >> "$out"
     printf '\n== kmutil inspect --volume-root %s ==\nmissing kmutil\n' "$ROOT" >> "$out"
   fi
 }
@@ -215,7 +219,7 @@ capture_tool_probes() {
   local out="$META/tool-probes.txt"
   local tool
   : > "$out"
-  for tool in date sw_vers uname sysctl system_profiler kmutil ipsw nm c++filt xcrun shasum file cp find sort; do
+  for tool in date sw_vers uname sysctl system_profiler kmutil ipsw nm c++filt xcrun shasum file cp find sort stat; do
     {
       printf '\n== command -v %s ==\n' "$tool"
       command -v "$tool" || true
@@ -225,6 +229,8 @@ capture_tool_probes() {
     append_cmd "$out" ipsw version
     append_cmd "$out" ipsw kernel extract --help
     append_cmd "$out" ipsw kernel kexts --help
+    append_cmd "$out" ipsw img4 extract --help
+    append_cmd "$out" ipsw img4 im4p extract --help
   fi
   if command -v xcrun >/dev/null 2>&1; then
     append_cmd "$out" xcrun --find llvm-objdump
@@ -269,6 +275,120 @@ copy_kc() {
     shasum -a 256 "$dst" > "$META/$base.sha256" 2>&1 || true
   else
     printf 'copy failed: %s -> %s\n' "$src" "$dst" >> "$COPY_ERRORS"
+  fi
+}
+
+copy_preboot_kernelcache() {
+  local src="$1"
+  local idx="$2"
+  local tag img4 macho work im4p
+  tag="PrebootKernelCache-$idx"
+  img4="$KCS/$tag.img4"
+  macho="$KCS/$tag.macho"
+
+  {
+    printf 'path=%s\n' "$src"
+    printf 'source=%s\n' "$src"
+    if [[ -e "$src" || -L "$src" ]]; then
+      ls -laeO@ "$src" || true
+      file "$src" || true
+    else
+      echo "missing"
+    fi
+  } > "$META/$tag.img4.file.txt" 2>&1
+
+  if [[ ! -f "$src" ]]; then
+    printf 'missing preboot kernelcache: %s\n' "$src" >> "$COPY_ERRORS"
+    return 0
+  fi
+
+  if cp "$src" "$img4" 2>> "$COPY_ERRORS"; then
+    printf '%s\n' "$img4" >> "$META/copied-kernelcollections.txt"
+    shasum -a 256 "$img4" > "$META/$tag.img4.sha256" 2>&1 || true
+  else
+    printf 'copy failed: %s -> %s\n' "$src" "$img4" >> "$COPY_ERRORS"
+    return 0
+  fi
+
+  if ! command -v ipsw >/dev/null 2>&1; then
+    echo "ipsw missing; cannot unwrap $img4" > "$META/$tag.unwrap-skipped.txt"
+    return 0
+  fi
+
+  work="$(mktemp -d "${TMPDIR:-/tmp}/f022-preboot-img4.XXXXXX" 2>/dev/null || mktemp -d "/tmp/f022-preboot-img4.XXXXXX" 2>/dev/null || true)"
+  if [[ -z "$work" || ! -d "$work" ]]; then
+    printf 'failed to create temporary IMG4 directory for %s\n' "$img4" > "$META/$tag.unwrap-skipped.txt"
+    return 0
+  fi
+
+  if run_capture "$META/$tag.img4-extract.stdout.txt" "$META/$tag.img4-extract.stderr.txt" \
+      ipsw --no-color img4 extract --im4p --output "$work" "$img4"; then
+    im4p="$(find "$work" -type f -name '*.im4p' -print -quit 2>/dev/null || true)"
+    if [[ -n "$im4p" && -f "$im4p" ]]; then
+      run_capture "$META/$tag.im4p-extract.stdout.txt" "$META/$tag.im4p-extract.stderr.txt" \
+        ipsw --no-color img4 im4p extract --output "$macho" "$im4p" || true
+    else
+      printf 'no IM4P output found under %s\n' "$work" > "$META/$tag.im4p-extract.stderr.txt"
+    fi
+  fi
+
+  if [[ -f "$macho" ]]; then
+    printf '%s\n' "$macho" >> "$META/copied-kernelcollections.txt"
+    file "$macho" > "$META/$tag.macho.file.txt" 2>&1 || true
+    shasum -a 256 "$macho" > "$META/$tag.macho.sha256" 2>&1 || true
+  fi
+
+  rm -rf "$work"
+}
+
+collect_preboot_kernelcaches() {
+  local preboot_root candidates_file candidates_tsv sorted_tsv idx limit src mtime
+  preboot_root=""
+  if [[ "$ROOT" == "/" ]]; then
+    preboot_root="/System/Volumes/Preboot"
+  elif [[ -d "$ROOT/System/Volumes/Preboot" ]]; then
+    preboot_root="$ROOT/System/Volumes/Preboot"
+  fi
+
+  candidates_file="$META/preboot-kernelcache-candidates.txt"
+  candidates_tsv="$META/preboot-kernelcache-candidates.tsv"
+  sorted_tsv="$META/preboot-kernelcache-candidates.sorted.tsv"
+  : > "$candidates_file"
+  : > "$candidates_tsv"
+  : > "$sorted_tsv"
+
+  if [[ -z "$preboot_root" || ! -d "$preboot_root" ]]; then
+    echo "preboot root not found" >> "$candidates_file"
+    return 0
+  fi
+
+  for src in "$preboot_root"/*/boot/*/System/Library/Caches/com.apple.kernelcaches/kernelcache; do
+    [[ -f "$src" ]] || continue
+    printf '%s\n' "$src" >> "$candidates_file"
+    mtime="$(stat -f '%m' "$src" 2>/dev/null || echo 0)"
+    printf '%s\t%s\n' "$mtime" "$src" >> "$candidates_tsv"
+  done
+
+  LC_ALL=C sort -k1,1rn -k2,2 "$candidates_tsv" > "$sorted_tsv" 2>/dev/null || true
+  idx=0
+  limit="${APPLESAUCE_PREBOOT_KC_LIMIT:-3}"
+  if [[ -z "$limit" || "$limit" == *[!0-9]* ]]; then
+    printf 'invalid APPLESAUCE_PREBOOT_KC_LIMIT=%q; using 3\n' "$limit" >> "$COPY_ERRORS"
+    limit=3
+  fi
+  while IFS="$(printf '\t')" read -r mtime src; do
+    [[ -n "$src" && -f "$src" ]] || continue
+    idx=$((idx + 1))
+    if [[ "$idx" -gt "$limit" ]]; then
+      printf 'skipped due to APPLESAUCE_PREBOOT_KC_LIMIT=%s: %s\n' "$limit" "$src" >> "$COPY_ERRORS"
+      continue
+    fi
+    printf '[*] copying preboot kernelcache %02d: %s\n' "$idx" "$src"
+    copy_preboot_kernelcache "$src" "$(printf '%02d' "$idx")"
+  done < "$sorted_tsv"
+
+  if [[ "$idx" -eq 0 ]]; then
+    echo "no preboot boot/* kernelcache candidates found" >> "$candidates_file"
   fi
 }
 
@@ -362,7 +482,7 @@ extract_targets() {
 
   for target in "${targets[@]}"; do
     found="no"
-    for kc in "$KCS"/BootKernelExtensions.kc "$KCS"/SystemKernelExtensions.kc "$KCS"/AuxiliaryKernelExtensions.kc; do
+    for kc in "$KCS"/PrebootKernelCache-*.macho "$KCS"/BootKernelExtensions.kc "$KCS"/SystemKernelExtensions.kc "$KCS"/AuxiliaryKernelExtensions.kc; do
       [[ -f "$kc" ]] || continue
       echo "[*] extracting $target from $(basename "$kc")"
       if attempt_extract_one "$kc" "$target"; then
@@ -419,6 +539,7 @@ capture_tool_probes
 copy_kc "System/Library/KernelCollections/BootKernelExtensions.kc" "no"
 copy_kc "System/Library/KernelCollections/SystemKernelExtensions.kc" "no"
 copy_kc "System/Library/KernelCollections/AuxiliaryKernelExtensions.kc" "yes"
+collect_preboot_kernelcaches
 
 extract_targets
 generate_reverse_artifacts
