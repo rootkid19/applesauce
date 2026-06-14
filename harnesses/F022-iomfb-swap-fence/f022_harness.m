@@ -127,8 +127,15 @@ static kern_return_t call_method(io_connect_t conn, const char *tag, uint32_t se
         tag, selector, sInCnt, structInSize, (sOutCnt?*sOutCnt:0),
         (structOutSize?*structOutSize:0), (unsigned)kr, kr_str(kr));
     if (kr == 0xe00002c2) {
-        LOGW("    LAYOUT MISMATCH on %s: kernel rejected selector/struct shape (sel %u, structIn %zu)."
-             " Record as layout mismatch, NOT 'not reachable'. Mutating.", tag, selector, structInSize);
+        // IOExternalMethodDispatch requires EXACT match on all four: checkScalarInputCount,
+        // checkStructureInputSize, checkScalarOutputCount, checkStructureOutputSize. A 0xe00002c2
+        // before the handler runs is an ABI mismatch on one of these counts (harness friction), not
+        // a kernel reachability verdict. Cross-check vs the static table (swap_start: sIn0/stIn0/
+        // sOut1/stOut0; swap_submit: sIn0/stIn1416/sOut0/stOut0).
+        LOGW("    ABI/COUNT MISMATCH on %s (sel %u: scalarIn=%u structIn=%zu scalarOut=%u structOut=%zu)."
+             " Fix the arg counts to the dispatch-table values; NOT 'not reachable'.",
+             tag, selector, sInCnt, structInSize, (sOutCnt?*sOutCnt:0),
+             (structOutSize?*structOutSize:0));
     }
     return kr;
 }
@@ -262,7 +269,7 @@ static kern_return_t submit_once(mfb_handle_t *h, uint32_t sid, int w, int h_px,
                                  const uint8_t *override_rec, int *out_submitted) {
     *out_submitted = 0;
     // 1) swap_start -> swap id
-    uint64_t out[8] = {0}; uint32_t outCnt = 8;
+    uint64_t out[8] = {0}; uint32_t outCnt = 1; // swap_start checkScalarOutputCount==1 (exact match)
     kern_return_t kr = call_method(h->conn, "swap_start", SEL_SWAP_START,
                                    NULL, 0, NULL, 0, out, &outCnt, NULL, NULL);
     if (kr != KERN_SUCCESS) {
@@ -353,7 +360,7 @@ static void do_probe(void) {
     }
     // Exercise benign selectors to learn the live calling convention + confirm dispatchability.
     // swap_start is the safest in-surface call (allocates a swap id; no surfaces bound yet).
-    uint64_t out[8] = {0}; uint32_t outCnt = 8;
+    uint64_t out[8] = {0}; uint32_t outCnt = 1; // swap_start checkScalarOutputCount==1 (exact match)
     call_method(h.conn, "swap_start", SEL_SWAP_START, NULL, 0, NULL, 0, out, &outCnt, NULL, NULL);
     // probe a deliberately-wrong struct size on swap_submit to confirm the BadArgument signature
     uint8_t small[16] = {0};
