@@ -1,4 +1,4 @@
-# F022 swap-fence UAF — v1 exploration harness
+# F022 swap-fence UAF — v1.2 exploration harness
 
 Explores the live IOMobileFramebufferUserClient calling convention, reaches `swap_apply_fences_gated`,
 and triggers **close-after-fence-registration** on macOS **26.5.1 / 25F80 / MacBookPro18,2 / M1 Max**.
@@ -10,8 +10,10 @@ clang -O0 -g -fobjc-arc -framework IOKit -framework CoreFoundation -framework IO
       -o f022_harness f022_harness.m
 
 ./f022_harness --probe              # diagnostics only, never gates
-./f022_harness --trigger --iters 16 # deterministic record, staged classifier
+./f022_harness --trigger --iters 1  # default: use IOMFB default_fb_surface, then close
 ./f022_harness --trigger --mutate   # add the narrow geometry-rect fallback if STAGE3 persists
+./f022_harness --trigger --generic-surface # old IOSurfaceCreate path; expected to hit STAGE3.5 here
+./f022_harness --trigger --surface-id 23   # manual surface-id override
 ./f022_harness                      # probe then trigger (default)
 ```
 **Do not run until authorized.** A landed trigger is expected to **panic** on a release kernel (UAF on
@@ -38,8 +40,9 @@ workloop). Prefer a **dev/KASAN kernel** for clean attribution. Never run on a b
 
 ## Static ground truth seeded into the harness (26.5.1)
 - Dispatch table `0xfffffe00084c4258`, 24-byte entries, max selector `0x5c`.
-- `swap_start` = sel **4** (scalarOut=1, the swap id); `swap_submit` = sel **5** (structIn **1416** =
-  `IOMFBSwapRec`); `swap_wait` = 6; `swap_signal` = 20; `swap_cancel` = 52.
+- `default_fb_surface` = sel **3** (scalarIn=2, scalarOut=1, framebuffer-owned IOSurface ID);
+  `swap_start` = sel **4** (scalarOut=1, the swap id); `swap_submit` = sel **5** (structIn **1416** =
+  `IOMFBSwapRec`); `get_display_size` = 8; `swap_wait` = 6; `swap_signal` = 20; `swap_cancel` = 52.
 
 ### v1.1 — `IOMFBSwapRec` field map (reversed; no longer guessed)
 From `swap_submit` @`0xa950c20` (per-layer loop `k=0..3`) and `swap_queue_finalize_gated` @`0xa9520bc`:
@@ -78,12 +81,13 @@ stopped, not just "failed":
 | `0xe00002bc` | STAGE1 rejected at/before request creation (rec null / id mismatch) |
 | `0xe00002eb` | STAGE2 created but not queued (abort flag / not on `+0x17a8`) |
 | `0xe00002c2` | STAGE3 queued but **no fences** (a finalize gate rejected — refine geometry) |
+| `0xe00002d1` | **STAGE3.5** surface lookup OK and `swap_layer_map` reached, but generic `surface_map` rejected display DMA binding. Use `default_fb_surface` / display-compatible backing. |
 | other | STAGE? likely surface lookup failed (bad id → `req+0xac0` null → fence skipped) |
 
 Codes are derived from `swap_queue_finalize_gated`; `swap_submit` may wrap them, so the classifier
-prints the raw code too and the live run pins the mapping. STAGE4 is the goal of v1.1.
+prints the raw code too and the live run pins the mapping. STAGE4 is the goal of v1.2.
 
-## What v1.1 must establish (in order; the staged classifier reports each)
+## What v1.2 must establish (in order; the staged classifier reports each)
 1. **UC open** works (record type id + sandbox result).
 2. **swap_start** dispatches → swap id (externalMethod path live).
 3. **swap_submit** with the deterministic single-layer record reaches **STAGE4** (kr `0`): request
@@ -95,13 +99,25 @@ prints the raw code too and the live run pins the mapping. STAGE4 is the goal of
    `fence_completed_dispatch → io_fence_callback → io_fence_notify_gated`.
 
 If STAGE4 is reached but no panic, the fence self-completed before teardown (producer not truly
-outstanding): raise `--iters`, add layers, or make the producer genuinely pending (the harness holds
-an `IOSurfaceLock` + use-count; if insufficient on this build, the next step is the swap rec's explicit
-wait-fence field — a v1.2 item, only needed if STAGE4 lands but the race never does).
+outstanding): raise `--iters`, add layers, or make the producer genuinely pending. With a default
+framebuffer surface, the next step is the swap rec's explicit wait-fence field, only needed if STAGE4
+lands but the race never does.
+
+## v1.2 update after first live trigger
+The first M1 Max trigger with a generic 64x64 `IOSurfaceCreate` surface reached `swap_layer_map` but
+returned `0xe00002d1`. Static path match: `swap_layer_map` called `surface_map`, and `surface_map`
+failed while setting the `IODMACommand` memory descriptor for display scanout. That is a surface
+backing/DART compatibility miss, not a record parser miss and not a bug kill.
+
+v1.2 therefore defaults to selector **3** `default_fb_surface`, which is not entitlement-gated and
+returns the framebuffer-owned IOSurface ID. `swap_layer_map` special-cases that exact surface
+(`surface == fb+0x1868`) and bypasses `surface_map`, copying the framebuffer's existing mappings
+instead. This is the right next experiment. Keep `--generic-surface` only as a control for the known
+STAGE3.5 failure bucket.
 
 ## The prompt for the repro agent
 > Do not treat a failed first attempt as a negative finding. Instrument every return code and keep
-> adapting until we know which precondition is missing. The goal of v1 is to map the live calling
+> adapting until we know which precondition is missing. The goal of v1.2 is to map the live calling
 > convention and reach `swap_apply_fences_gated`, then trigger close-after-fence-registration. Only the
 > static structural chain decides bug viability; runtime harness failures are engineering blockers
 > unless they prove a kernel-side invariant (a per-fence request retain, a synchronous fence drain in
@@ -118,5 +134,5 @@ wait-fence field — a v1.2 item, only needed if STAGE4 lands but the race never
   it next.
 - Direct-path fallbacks (surface create via `IOSurfaceRootUserClient`, UC-open type widening) remain
   TODO stubs — add only if `--probe` shows the helper path is actually blocked (the operator's call).
-- **v1.2 (only if STAGE4 lands but the race never does):** set the swap rec's explicit producer/wait-
+- **Next if default_fb_surface reaches STAGE4 but no panic:** set the swap rec's explicit producer/wait-
   fence field to a never-signaled shared-event value for a deterministic pending fence.

