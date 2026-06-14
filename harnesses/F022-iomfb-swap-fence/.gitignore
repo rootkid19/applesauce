@@ -1,0 +1,4 @@
+f022_harness
+*.o
+*.dSYM/
+build/
