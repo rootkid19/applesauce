@@ -1,4 +1,4 @@
-# F022 swap-fence UAF — v1.2 exploration harness
+# F022 swap-fence UAF — v1.3 exploration harness
 
 Explores the live IOMobileFramebufferUserClient calling convention, reaches `swap_apply_fences_gated`,
 and triggers **close-after-fence-registration** on macOS **26.5.1 / 25F80 / MacBookPro18,2 / M1 Max**.
@@ -10,7 +10,7 @@ clang -O0 -g -fobjc-arc -framework IOKit -framework CoreFoundation -framework IO
       -o f022_harness f022_harness.m
 
 ./f022_harness --probe              # diagnostics only, never gates
-./f022_harness --trigger --iters 1  # default: use IOMFB default_fb_surface, then close
+./f022_harness --trigger --iters 1  # default: default/displayed framebuffer surface, then close
 ./f022_harness --trigger --mutate   # add the narrow geometry-rect fallback if STAGE3 persists
 ./f022_harness --trigger --generic-surface # old IOSurfaceCreate path; expected to hit STAGE3.5 here
 ./f022_harness --trigger --surface-id 23   # manual surface-id override
@@ -42,7 +42,8 @@ workloop). Prefer a **dev/KASAN kernel** for clean attribution. Never run on a b
 - Dispatch table `0xfffffe00084c4258`, 24-byte entries, max selector `0x5c`.
 - `default_fb_surface` = sel **3** (scalarIn=2, scalarOut=1, framebuffer-owned IOSurface ID);
   `swap_start` = sel **4** (scalarOut=1, the swap id); `swap_submit` = sel **5** (structIn **1416** =
-  `IOMFBSwapRec`); `get_display_size` = 8; `swap_wait` = 6; `swap_signal` = 20; `swap_cancel` = 52.
+  `IOMFBSwapRec`); `get_display_size` = 8; `swap_wait` = 6; `swap_signal` = 20; `swap_cancel` = 52;
+  `displayed_fb_surface` = **83** (scalarIn=1, scalarOut=1, entitlement/runtime-gated).
 
 ### v1.1 — `IOMFBSwapRec` field map (reversed; no longer guessed)
 From `swap_submit` @`0xa950c20` (per-layer loop `k=0..3`) and `swap_queue_finalize_gated` @`0xa9520bc`:
@@ -85,9 +86,9 @@ stopped, not just "failed":
 | other | STAGE? likely surface lookup failed (bad id → `req+0xac0` null → fence skipped) |
 
 Codes are derived from `swap_queue_finalize_gated`; `swap_submit` may wrap them, so the classifier
-prints the raw code too and the live run pins the mapping. STAGE4 is the goal of v1.2.
+prints the raw code too and the live run pins the mapping. STAGE4 is the goal of v1.3.
 
-## What v1.2 must establish (in order; the staged classifier reports each)
+## What v1.3 must establish (in order; the staged classifier reports each)
 1. **UC open** works (record type id + sandbox result).
 2. **swap_start** dispatches → swap id (externalMethod path live).
 3. **swap_submit** with the deterministic single-layer record reaches **STAGE4** (kr `0`): request
@@ -103,21 +104,27 @@ outstanding): raise `--iters`, add layers, or make the producer genuinely pendin
 framebuffer surface, the next step is the swap rec's explicit wait-fence field, only needed if STAGE4
 lands but the race never does.
 
-## v1.2 update after first live trigger
+## v1.2/v1.3 update after first live triggers
 The first M1 Max trigger with a generic 64x64 `IOSurfaceCreate` surface reached `swap_layer_map` but
 returned `0xe00002d1`. Static path match: `swap_layer_map` called `surface_map`, and `surface_map`
 failed while setting the `IODMACommand` memory descriptor for display scanout. That is a surface
 backing/DART compatibility miss, not a record parser miss and not a bug kill.
 
-v1.2 therefore defaults to selector **3** `default_fb_surface`, which is not entitlement-gated and
-returns the framebuffer-owned IOSurface ID. `swap_layer_map` special-cases that exact surface
+v1.2 therefore tried selector **3** `default_fb_surface`, which is not entitlement-gated and returns
+the framebuffer-owned IOSurface ID when `fb+0x1868` already exists. On this M1 Max, selector 3
+returned `0xe00002bc`: the default surface pointer is null, so the wrapper reports NotReady. That is
+a host-state surface-source precondition, not a contradiction.
+
+v1.3 tries selector **83** `displayed_fb_surface(layer 0)` after selector 3 before stopping. If both
+exported framebuffer-owned surface paths fail, the harness no longer auto-falls back to generic
+`IOSurfaceCreate`; use `--generic-surface` only as a control for the known STAGE3.5 failure bucket.
+When a framebuffer-owned/default surface ID is available, `swap_layer_map` special-cases that surface
 (`surface == fb+0x1868`) and bypasses `surface_map`, copying the framebuffer's existing mappings
-instead. This is the right next experiment. Keep `--generic-surface` only as a control for the known
-STAGE3.5 failure bucket.
+instead.
 
 ## The prompt for the repro agent
 > Do not treat a failed first attempt as a negative finding. Instrument every return code and keep
-> adapting until we know which precondition is missing. The goal of v1.2 is to map the live calling
+> adapting until we know which precondition is missing. The goal of v1.3 is to map the live calling
 > convention and reach `swap_apply_fences_gated`, then trigger close-after-fence-registration. Only the
 > static structural chain decides bug viability; runtime harness failures are engineering blockers
 > unless they prove a kernel-side invariant (a per-fence request retain, a synchronous fence drain in
@@ -134,5 +141,5 @@ STAGE3.5 failure bucket.
   it next.
 - Direct-path fallbacks (surface create via `IOSurfaceRootUserClient`, UC-open type widening) remain
   TODO stubs — add only if `--probe` shows the helper path is actually blocked (the operator's call).
-- **Next if default_fb_surface reaches STAGE4 but no panic:** set the swap rec's explicit producer/wait-
-  fence field to a never-signaled shared-event value for a deterministic pending fence.
+- **Next if a framebuffer-owned/displayed surface reaches STAGE4 but no panic:** set the swap rec's
+  explicit producer/wait-fence field to a never-signaled shared-event value for a deterministic pending fence.

